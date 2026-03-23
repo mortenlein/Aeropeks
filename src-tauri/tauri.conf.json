@@ -1,0 +1,55 @@
+{
+  "productName": "Aeropeks",
+  "version": "0.1.0",
+  "identifier": "com.aeropeks.app",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Aeropeks",
+        "width": 1920,
+        "height": 32,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "resizable": false,
+        "fullscreen": false,
+        "visible": true,
+        "x": 0,
+        "y": 0,
+        "center": false
+      },
+      {
+        "label": "settings",
+        "title": "Aeropeks Settings",
+        "url": "/",
+        "width": 400,
+        "height": 500,
+        "decorations": true,
+        "transparent": false,
+        "resizable": false,
+        "visible": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ]
+  }
+}

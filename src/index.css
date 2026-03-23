@@ -1,0 +1,257 @@
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: light dark;
+  color: rgba(255, 255, 255, 0.87);
+  background-color: transparent;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  place-items: center;
+  min-width: 320px;
+  min-height: 32px;
+  background-color: transparent !important;
+}
+
+#root {
+  width: 100%;
+}
+
+.menu-bar {
+  height: 32px;
+  width: 100%;
+  background: #141419;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  box-sizing: border-box;
+  color: #efefef;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: default;
+  user-select: none;
+  overflow: hidden;
+}
+
+.volume-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.volume-slider {
+  width: 80px;
+  height: 4px;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 2px;
+  outline: none;
+}
+
+.volume-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  background: #6e8efb;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+/* Settings Styles */
+.settings-container {
+  padding: 24px;
+  background: #1e1e24;
+  min-height: 100vh;
+  box-sizing: border-box;
+  color: #efefef;
+  font-family: Inter, sans-serif;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-container h3 {
+  margin-top: 0;
+}
+
+.setting-section {
+  margin-bottom: 28px;
+}
+
+.setting-section h4 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 16px;
+  color: #6e8efb;
+  letter-spacing: 0.3px;
+}
+
+.setting-group {
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.setting-group label {
+  font-size: 13px;
+  opacity: 0.8;
+}
+
+.setting-group input[type="number"],
+.setting-group input[type="text"],
+.setting-group input[type="password"] {
+  background: #2a2a30;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #fff;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.setting-group input:focus {
+  border-color: #6e8efb;
+}
+
+.setting-hint {
+  font-size: 11px;
+  opacity: 0.4;
+}
+
+.settings-footer {
+  margin-top: auto;
+  padding-top: 20px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+
+button {
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+button.primary {
+  background: #6e8efb;
+  border: none;
+}
+
+.left-section {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.center-section {
+  flex: 2;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.right-section {
+  flex: 1;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 16px;
+}
+
+.app-icon {
+  width: 16px;
+  height: 16px;
+  background: linear-gradient(135deg, #6e8efb, #a777e3);
+  border-radius: 4px;
+}
+
+.window-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 300px;
+}
+
+.media-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 2px 12px;
+  border-radius: 99px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  pointer-events: auto;
+  z-index: 50;
+}
+
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0.8;
+}
+
+.status-item:hover {
+  opacity: 1;
+}
+
+.playing-icon {
+  color: #6e8efb;
+  animation: pulse 2s infinite;
+}
+
+.media-info.paused {
+  opacity: 0.6;
+  filter: grayscale(0.5);
+}
+
+.media-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-right: 12px;
+  padding-right: 12px;
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  pointer-events: auto;
+  z-index: 100;
+}
+
+.control-node {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: all 0.2s;
+}
+
+.control-node:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.1);
+  transform: scale(1.1);
+}
+
+.playing-icon {
+  color: #6e8efb;
+  animation: pulse 2s infinite ease-in-out;
+}

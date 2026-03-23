@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+dist/
+dist-tauri/
+
+# Rust Build
+src-tauri/target/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Tauri Specific
+src-tauri/binaries/
+src-tauri/gen/
+src-tauri/remote/
+
+# Environment
+.env
+.env.*
+*.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
