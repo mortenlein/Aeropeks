@@ -48,7 +48,20 @@
         "alwaysOnTop": true,
         "resizable": false,
         "visible": false,
-        "center": true
+        "shadow": false
+      },
+      {
+        "label": "terminal-panel",
+        "title": "Terminal",
+        "url": "/?window=terminal-panel",
+        "width": 860,
+        "height": 460,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "shadow": false
       }
     ],
     "security": {

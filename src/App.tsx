@@ -1,7 +1,13 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { Music, Volume2, Clock, Play, Pause, SkipBack, SkipForward } from "lucide-react";
+import { Music, Volume2, Clock, Play, Pause, SkipBack, SkipForward, Terminal as TerminalIcon } from "lucide-react";
+
+interface AppSettings {
+  plex_url: string;
+  plex_token: string;
+  accent_color: string;
+}
 
 interface MediaInfo {
   title: string;
@@ -17,7 +23,9 @@ function App() {
   const [mediaInfo, setMediaInfo] = useState<MediaInfo | null>(null);
   const [volume, setVolume] = useState(0.5);
   const [showVolume, setShowVolume] = useState(false);
-  const [time, setTime] = useState(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+  const [time, setTime] = useState(
+    new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  );
 
   const fetchMedia = () => {
     invoke<MediaInfo>("get_media_info").then((info) => {
@@ -28,12 +36,17 @@ function App() {
   };
 
   useEffect(() => {
+    invoke<AppSettings>("get_settings").then((s) => {
+      if (s.accent_color) {
+        document.documentElement.style.setProperty("--accent", s.accent_color);
+      }
+    }).catch(() => {});
     invoke<number>("get_volume").then(setVolume);
     fetchMedia();
 
     const pollInterval = setInterval(fetchMedia, 5000);
     const timeInterval = setInterval(() => {
-      setTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+      setTime(new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }));
     }, 60000);
 
     const unlistenWindow = listen<string>("window-change", (event) => {
@@ -132,6 +145,9 @@ function App() {
                 className="volume-slider"
               />
             )}
+          </div>
+          <div className="status-item" onClick={() => invoke("toggle_terminal_panel")}>
+            <TerminalIcon size={16} />
           </div>
           <div className="status-item">
             <Clock size={16} />

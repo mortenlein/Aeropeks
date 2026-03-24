@@ -1,3 +1,4 @@
+// Aeropeks v0.1.0 - Terminal Fix Build
 use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
 use std::fs;
@@ -17,6 +18,14 @@ use tauri::tray::TrayIconBuilder;
 use std::thread;
 use std::time::Duration;
 use serde::{Serialize, Deserialize};
+use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem, MasterPty};
+use std::io::{Write, Read};
+use base64::{Engine as _, engine::general_purpose};
+
+#[derive(Serialize, Clone)]
+struct PtyPayload {
+    data: String,
+}
 
 // ── Settings ────────────────────────────────────────────────────────
 
@@ -24,9 +33,20 @@ use serde::{Serialize, Deserialize};
 struct AppSettings {
     plex_url: String,
     plex_token: String,
+    #[serde(default = "default_accent_color")]
+    accent_color: String,
+}
+
+fn default_accent_color() -> String {
+    "#22c55e".to_string()
 }
 
 type SharedSettings = Arc<Mutex<AppSettings>>;
+
+struct TerminalState {
+    writer: Arc<Mutex<Option<Box<dyn Write + Send>>>>,
+    master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
+}
 
 fn get_settings_path(handle: tauri::AppHandle) -> PathBuf {
     let mut path = handle.path().app_data_dir().unwrap();
@@ -45,6 +65,7 @@ fn fetch_settings_helper(handle: tauri::AppHandle) -> AppSettings {
     AppSettings {
         plex_url: "http://localhost:32400".to_string(),
         plex_token: "".to_string(),
+        accent_color: "#22c55e".to_string(),
     }
 }
 
@@ -71,10 +92,14 @@ fn get_settings(state: tauri::State<'_, SharedSettings>) -> Result<AppSettings, 
 struct MediaInfo {
     title: String,
     artist: String,
+    album: String,
+    thumb: String,
+    duration_ms: u64,
+    view_offset_ms: u64,
     is_playing: bool,
     session_id: String,
     machine_id: String,
-    address: String, 
+    address: String,
 }
 
 fn fetch_plex_media(settings: &AppSettings) -> Option<MediaInfo> {
@@ -89,8 +114,12 @@ fn fetch_plex_media(settings: &AppSettings) -> Option<MediaInfo> {
     for item in metadata {
         let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let artist = item.get("grandparentTitle").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let album = item.get("parentTitle").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let thumb = item.get("thumb").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let duration_ms = item.get("duration").and_then(|v| v.as_u64()).unwrap_or(0);
+        let view_offset_ms = item.get("viewOffset").and_then(|v| v.as_u64()).unwrap_or(0);
         let session_id = item.get("sessionKey").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        
+
         let player = item.get("Player").and_then(|v| v.as_object());
         let machine_id = player.and_then(|p| p.get("machineIdentifier")).and_then(|v| v.as_str()).unwrap_or("").to_string();
         let address = player.and_then(|p| p.get("address")).and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -100,6 +129,10 @@ fn fetch_plex_media(settings: &AppSettings) -> Option<MediaInfo> {
             return Some(MediaInfo {
                 title,
                 artist,
+                album,
+                thumb,
+                duration_ms,
+                view_offset_ms,
                 is_playing: state == "playing",
                 session_id,
                 machine_id,
@@ -108,6 +141,22 @@ fn fetch_plex_media(settings: &AppSettings) -> Option<MediaInfo> {
         }
     }
     None
+}
+
+#[tauri::command]
+fn get_album_art(thumb: String, state: tauri::State<'_, SharedSettings>) -> Result<String, String> {
+    if thumb.is_empty() { return Ok(String::new()); }
+    let settings = state.lock().map_err(|e| e.to_string())?;
+    let url = format!("{}/photo/:/transcode?url={}&width=200&height=200&X-Plex-Token={}",
+        settings.plex_url.trim_end_matches('/'),
+        urlencoding::encode(&thumb),
+        settings.plex_token
+    );
+    let client = reqwest::blocking::Client::builder().timeout(Duration::from_secs(5)).build().map_err(|e| e.to_string())?;
+    let resp = client.get(&url).send().map_err(|e| e.to_string())?;
+    let bytes = resp.bytes().map_err(|e| e.to_string())?;
+    use base64::Engine;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
 
 #[tauri::command]
@@ -128,33 +177,50 @@ fn plex_control(command: String, session_id: String, machine_id: String, address
         _ => return Err("Invalid command".to_string()),
     };
 
-    let client = reqwest::blocking::Client::builder().timeout(Duration::from_secs(2)).build().unwrap_or_default();
-    
-    let mut urls = vec![
-        // Attempt 1: Standard Player Proxy
-        format!("{}/player/proxy/playback/{}?X-Plex-Target-Client-Identifier={}&X-Plex-Token={}&sessionKey={}", 
-            settings.plex_url.trim_end_matches('/'), plex_command, machine_id, settings.plex_token, session_id),
-        // Attempt 2: Alternative System Players Proxy
-        format!("{}/system/players/{}/playback/{}?X-Plex-Token={}", 
-            settings.plex_url.trim_end_matches('/'), machine_id, plex_command, settings.plex_token)
+    let client = reqwest::blocking::Client::builder().timeout(Duration::from_secs(3)).build().unwrap_or_default();
+
+    // Build a unique command ID from current time
+    let command_id = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(1);
+
+    let mut attempts: Vec<(String, &str)> = vec![
+        // Attempt 1: Plex server proxy to player
+        (format!("{}/player/proxy/playback/{}?X-Plex-Target-Client-Identifier={}&X-Plex-Token={}&commandID={}",
+            settings.plex_url.trim_end_matches('/'), plex_command, machine_id, settings.plex_token, command_id), "GET"),
     ];
 
     if !address.is_empty() {
-        // Attempt 3: Direct Player IP (Plexamp listens on 32500)
-        urls.push(format!("http://{}:32500/player/playback/{}?X-Plex-Token={}&commandID=1", address, plex_command, settings.plex_token));
-        // Attempt 4: Direct Player IP (32400)
-        urls.push(format!("http://{}:32400/player/playback/{}?X-Plex-Token={}&commandID=1", address, plex_command, settings.plex_token));
+        // Attempt 2: Direct to Plexamp (port 32500) — POST
+        attempts.push((format!("http://{}:32500/player/playback/{}?commandID={}&X-Plex-Token={}",
+            address, plex_command, command_id, settings.plex_token), "POST"));
+        // Attempt 3: Direct to Plexamp (port 32500) — GET
+        attempts.push((format!("http://{}:32500/player/playback/{}?commandID={}&X-Plex-Token={}",
+            address, plex_command, command_id, settings.plex_token), "GET"));
+        // Attempt 4: Via Plex server system/players
+        attempts.push((format!("{}/system/players/{}/playback/{}?X-Plex-Token={}",
+            settings.plex_url.trim_end_matches('/'), address, plex_command, settings.plex_token), "GET"));
     }
 
-    for url in urls {
-        if let Ok(resp) = client.get(&url)
+    for (url, method) in &attempts {
+        let req = if *method == "POST" { client.post(url) } else { client.get(url) };
+        match req
+            .header("X-Plex-Client-Identifier", "aeropeks")
             .header("X-Plex-Target-Client-Identifier", &machine_id)
             .header("X-Plex-Token", &settings.plex_token)
-            .send() {
-                if resp.status().is_success() { return Ok(()); }
+            .send()
+        {
+            Ok(resp) => {
+                println!("Plex control {} {} → {}", method, url, resp.status());
+                if resp.status().is_success() || resp.status().as_u16() == 200 {
+                    return Ok(());
+                }
             }
+            Err(e) => println!("Plex control {} {} failed: {}", method, url, e),
+        }
     }
-    
+
     Err("All Plex control attempts failed".to_string())
 }
 
@@ -219,9 +285,120 @@ fn toggle_expanded_player(handle: tauri::AppHandle) {
                 let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y })).ok();
             }
             let _ = window.show().ok();
+            let _ = window.set_shadow(false).ok();
             let _ = window.set_focus().ok();
         }
     }
+}
+
+#[tauri::command]
+fn toggle_terminal_panel(handle: tauri::AppHandle) {
+    if let Some(window) = handle.get_webview_window("terminal-panel") {
+        let is_visible = window.is_visible().unwrap_or(false);
+        if is_visible {
+            let _ = window.hide().ok();
+        } else {
+            if let Ok(Some(monitor)) = handle.primary_monitor() {
+                let m_size = monitor.size();
+                let width = 860;
+                let height = 460;
+                let x = (m_size.width as i32 - width) / 2;
+                let y = 36;
+                let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize { width: width as u32, height: height as u32 })).ok();
+                let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y })).ok();
+            }
+            let _ = window.show().ok();
+            let _ = window.set_shadow(false).ok();
+            let _ = window.set_focus().ok();
+        }
+    }
+}
+
+#[tauri::command]
+fn start_pty(rows: u16, cols: u16, state: tauri::State<'_, TerminalState>, window: Window) -> Result<(), String> {
+    println!("INFO: start_pty called with {}x{}", rows, cols);
+    let pty_system = NativePtySystem::default();
+    let pair = pty_system.openpty(PtySize {
+        rows,
+        cols,
+        pixel_width: 0,
+        pixel_height: 0,
+    }).map_err(|e| e.to_string())?;
+
+    let cmd = CommandBuilder::new("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+    let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
+    
+    thread::spawn(move || {
+        let mut child = child;
+        let _ = child.wait();
+    });
+
+    let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
+    let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+
+    {
+        let mut w = state.writer.lock().unwrap();
+        *w = Some(writer);
+        let mut m = state.master.lock().unwrap();
+        *m = Some(pair.master);
+    }
+
+    let _ = window.emit("pty-ready", "OK");
+    let _ = window.app_handle().emit_to("terminal-panel", "pty-ready-global", "OK");
+    println!("INFO: PTY_READY emitted to terminal-panel");
+
+    let app_handle_hb = window.app_handle().clone();
+    thread::spawn(move || {
+        for _ in 0..15 {
+            thread::sleep(Duration::from_secs(1));
+            let _ = app_handle_hb.emit_to("terminal-panel", "pty-heartbeat", "HB");
+            println!("DEBUG: Heartbeat emitted to terminal-panel");
+        }
+    });
+
+    let app_handle = window.app_handle().clone();
+    thread::spawn(move || {
+        let mut reader = reader;
+        let mut buffer = [0u8; 1024];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) => { println!("INFO: PTY reader reached EOF"); break; }
+                Ok(n) => {
+                    let data = &buffer[..n];
+                    let b64 = general_purpose::STANDARD.encode(data);
+                    println!("INFO: PTY read {} bytes", n);
+                    let _ = app_handle.emit_to("terminal-panel", "pty-data", PtyPayload { data: b64 });
+                }
+                Err(e) => { println!("ERROR: PTY read error: {}", e); break; }
+            }
+        }
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+fn write_pty(data: String, state: tauri::State<'_, TerminalState>) -> Result<(), String> {
+    let mut writer = state.writer.lock().unwrap();
+    if let Some(w) = writer.as_mut() {
+        w.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
+        w.flush().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn resize_pty(rows: u16, cols: u16, state: tauri::State<'_, TerminalState>) -> Result<(), String> {
+    let master = state.master.lock().unwrap();
+    if let Some(m) = master.as_ref() {
+        m.resize(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        }).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 // ── AppBar ──────────────────────────────────────────────────────────
@@ -289,6 +466,11 @@ fn main() {
             let initial_settings = fetch_settings_helper(app.handle().clone());
             let shared: SharedSettings = Arc::new(Mutex::new(initial_settings));
             app.manage(shared.clone());
+
+            app.manage(TerminalState {
+                writer: Arc::new(Mutex::new(None)),
+                master: Arc::new(Mutex::new(None)),
+            });
 
             let media_settings = shared.clone();
 
@@ -416,7 +598,21 @@ fn main() {
                 _ => {}
             }
         })
-        .invoke_handler(tauri::generate_handler![get_volume, set_volume, get_media_info, get_settings, save_settings, open_settings, toggle_expanded_player, plex_control])
+        .invoke_handler(tauri::generate_handler![
+            get_volume, 
+            set_volume, 
+            get_media_info, 
+            get_settings, 
+            save_settings, 
+            open_settings, 
+            toggle_expanded_player, 
+            plex_control, 
+            get_album_art,
+            toggle_terminal_panel,
+            start_pty,
+            write_pty,
+            resize_pty
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

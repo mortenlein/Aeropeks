@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import App from "./App";
 import Settings from "./Settings";
 import ExpandedPlayer from "./ExpandedPlayer";
+import Terminal from "./Terminal";
 import "./index.css";
 
 function Root() {
@@ -25,6 +26,10 @@ function Root() {
 
   if (windowType === "expanded-player") {
     return <ExpandedPlayer />;
+  }
+
+  if (windowType === "terminal-panel") {
+    return <Terminal />;
   }
 
   // Only render App for the 'main' window explicitly

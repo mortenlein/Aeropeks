@@ -5,19 +5,20 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 interface AppSettings {
   plex_url: string;
   plex_token: string;
+  accent_color: string;
 }
 
 function Settings() {
   const [plexUrl, setPlexUrl] = useState("");
   const [plexToken, setPlexToken] = useState("");
-  const [height, setHeight] = useState(32);
-  const [alwaysOnTop, setAlwaysOnTop] = useState(true);
+  const [accentColor, setAccentColor] = useState("#22c55e");
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     invoke<AppSettings>("get_settings").then((s) => {
       setPlexUrl(s.plex_url || "");
       setPlexToken(s.plex_token || "");
+      setAccentColor(s.accent_color || "#22c55e");
     });
   }, []);
 
@@ -26,8 +27,11 @@ function Settings() {
       settings: {
         plex_url: plexUrl,
         plex_token: plexToken,
+        accent_color: accentColor,
       },
     });
+    // Live-apply the accent color
+    document.documentElement.style.setProperty("--accent", accentColor);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -66,23 +70,20 @@ function Settings() {
         <h4>Appearance</h4>
 
         <div className="setting-group">
-          <label>Bar Height (px)</label>
-          <input
-            type="number"
-            value={height}
-            onChange={(e) => setHeight(parseInt(e.target.value))}
-          />
-        </div>
-
-        <div className="setting-group">
-          <label>
+          <label>Accent Color</label>
+          <div className="color-row">
             <input
-              type="checkbox"
-              checked={alwaysOnTop}
-              onChange={(e) => setAlwaysOnTop(e.target.checked)}
+              type="color"
+              value={accentColor}
+              onChange={(e) => {
+                setAccentColor(e.target.value);
+                document.documentElement.style.setProperty("--accent", e.target.value);
+              }}
+              className="color-picker"
             />
-            Always on Top
-          </label>
+            <span className="setting-hint" style={{ marginLeft: 8 }}>{accentColor}</span>
+          </div>
+          <span className="setting-hint">Color of the accent bar and highlights</span>
         </div>
       </div>
 
