@@ -18,8 +18,6 @@ function App() {
   const [volume, setVolume] = useState(0.5);
   const [showVolume, setShowVolume] = useState(false);
   const [time, setTime] = useState(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-  const [updateCount, setUpdateCount] = useState(0);
-  const [lastCommand, setLastCommand] = useState<string>("");
 
   const fetchMedia = () => {
     invoke<MediaInfo>("get_media_info").then((info) => {
@@ -45,7 +43,6 @@ function App() {
     const unlistenMedia = listen<MediaInfo | null>("media-change", (event) => {
       if (event.payload) {
         setMediaInfo(event.payload);
-        setUpdateCount(prev => prev + 1);
       } else {
         setMediaInfo(null);
       }
@@ -66,10 +63,8 @@ function App() {
 
   const handlePlexControl = async (command: string) => {
     if (!mediaInfo?.session_id || !mediaInfo?.machine_id) {
-      setLastCommand("No Session");
       return;
     }
-    setLastCommand(command + "...");
     try {
       await invoke("plex_control", { 
         command, 
@@ -77,65 +72,71 @@ function App() {
         machineId: mediaInfo.machine_id,
         address: mediaInfo.address
       });
-      setLastCommand(command + " OK");
     } catch (e) {
       console.error("Plex Control Error:", e);
-      setLastCommand("Error");
     }
   };
 
   return (
-    <div className="menu-bar" onContextMenu={(e) => e.preventDefault()}>
-      <div className="left-section">
-        <div className="app-icon" />
-        <div className="window-title">
-          {windowTitle}
+    <div className="main-window">
+      <div className="menu-bar" onContextMenu={(e) => e.preventDefault()}>
+        <div className="left-section">
+          <div className="app-icon" />
+          <div className="window-title">
+            {windowTitle}
+          </div>
         </div>
-      </div>
-
-      <div className="center-section">
-        {mediaInfo ? (
-          <div className={`media-info ${!mediaInfo.is_playing ? 'paused' : ''}`}>
-             <div className="media-controls">
-                <div className="control-node" onClick={() => handlePlexControl("prev")}><SkipBack size={16} /></div>
-                <div className="control-node" onClick={() => handlePlexControl(mediaInfo.is_playing ? "pause" : "play")}>
-                  {mediaInfo.is_playing ? <Pause size={16} /> : <Play size={16} />}
-                </div>
-                <div className="control-node" onClick={() => handlePlexControl("next")}><SkipForward size={16} /></div>
-             </div>
-             <Music size={14} className={mediaInfo.is_playing ? "playing-icon" : ""} />
-             <span>{mediaInfo.artist} - {mediaInfo.title}</span>
-          </div>
-        ) : (
-          <div className="media-info" style={{ opacity: 0.5 }}>
-            <Music size={14} />
-            <span>Nothing Playing</span>
-          </div>
-        )}
-      </div>
-
-      <div className="right-section">
-        <div 
-          className="status-item"
-          onMouseEnter={() => setShowVolume(true)}
-          onMouseLeave={() => setShowVolume(false)}
-        >
-          <Volume2 size={16} />
-          {showVolume && (
-            <input 
-              type="range" 
-              min="0" 
-              max="1" 
-              step="0.01" 
-              value={volume} 
-              onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
-              className="volume-slider"
-            />
+        
+        {/* ... existing App content ... */}
+        
+        <div className="center-section">
+          {mediaInfo ? (
+            <div className={`media-info ${!mediaInfo.is_playing ? 'paused' : ''}`} onClick={() => invoke("toggle_expanded_player")}>
+               <div className="media-controls">
+                  <div className="control-node" title="Previous" onClick={() => handlePlexControl("prev")}><SkipBack size={14} /></div>
+                  <div className="control-node" title={mediaInfo.is_playing ? "Pause" : "Play"} onClick={() => handlePlexControl(mediaInfo.is_playing ? "pause" : "play")}>
+                    {mediaInfo.is_playing ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" />}
+                  </div>
+                  <div className="control-node" title="Next" onClick={() => handlePlexControl("next")}><SkipForward size={14} /></div>
+               </div>
+               <Music size={14} className={mediaInfo.is_playing ? "playing-icon" : ""} />
+               <div className="media-text">
+                 <span className="artist">{mediaInfo.artist}</span>
+                 <span className="separator">•</span>
+                 <span className="title">{mediaInfo.title}</span>
+               </div>
+            </div>
+          ) : (
+            <div className="media-info" style={{ opacity: 0.5 }}>
+              <Music size={14} />
+              <span>Nothing Playing</span>
+            </div>
           )}
         </div>
-        <div className="status-item">
-          <Clock size={16} />
-          <span>{time}</span>
+
+        <div className="right-section">
+          <div 
+            className="status-item"
+            onMouseEnter={() => setShowVolume(true)}
+            onMouseLeave={() => setShowVolume(false)}
+          >
+            <Volume2 size={16} />
+            {showVolume && (
+              <input 
+                type="range" 
+                min="0" 
+                max="1" 
+                step="0.01" 
+                value={volume} 
+                onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
+                className="volume-slider"
+              />
+            )}
+          </div>
+          <div className="status-item">
+            <Clock size={16} />
+            <span>{time}</span>
+          </div>
         </div>
       </div>
     </div>

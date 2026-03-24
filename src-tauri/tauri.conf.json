@@ -28,11 +28,24 @@
       {
         "label": "settings",
         "title": "Aeropeks Settings",
-        "url": "/",
+        "url": "/?window=settings",
         "width": 400,
         "height": 500,
         "decorations": true,
         "transparent": false,
+        "resizable": false,
+        "visible": false,
+        "center": true
+      },
+      {
+        "label": "expanded-player",
+        "title": "Aeropeks Player",
+        "url": "/?window=expanded-player",
+        "width": 640,
+        "height": 280,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
         "resizable": false,
         "visible": false,
         "center": true

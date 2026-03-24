@@ -201,6 +201,29 @@ fn open_settings(handle: tauri::AppHandle) {
     }
 }
 
+#[tauri::command]
+fn toggle_expanded_player(handle: tauri::AppHandle) {
+    if let Some(window) = handle.get_webview_window("expanded-player") {
+        let is_visible = window.is_visible().unwrap_or(false);
+        if is_visible {
+            let _ = window.hide().ok();
+        } else {
+            // Position it below the bar, centered
+            if let Ok(Some(monitor)) = handle.primary_monitor() {
+                let m_size = monitor.size();
+                let width = 640;
+                let height = 280; // Increased to 280 to be safe
+                let x = (m_size.width as i32 - width) / 2;
+                let y = 36; 
+                let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize { width: width as u32, height: height as u32 })).ok();
+                let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y })).ok();
+            }
+            let _ = window.show().ok();
+            let _ = window.set_focus().ok();
+        }
+    }
+}
+
 // ── AppBar ──────────────────────────────────────────────────────────
 
 fn register_app_bar(hwnd_v: HWND, width: u32) {
@@ -393,7 +416,7 @@ fn main() {
                 _ => {}
             }
         })
-        .invoke_handler(tauri::generate_handler![get_volume, set_volume, get_media_info, get_settings, save_settings, open_settings, plex_control])
+        .invoke_handler(tauri::generate_handler![get_volume, set_volume, get_media_info, get_settings, save_settings, open_settings, toggle_expanded_player, plex_control])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
