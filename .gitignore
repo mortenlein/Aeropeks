@@ -32,3 +32,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 *.log
+src-tauri/log.txt
+
+# Local settings
+settings.json

@@ -11,6 +11,7 @@ function Terminal() {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const unlistenRefs = useRef<(() => void)[]>([]);
+  const ptyListenersRef = useRef<(() => void)[]>([]);
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -33,15 +34,24 @@ function Terminal() {
         cyan: "#06b6d4",
         white: "#ffffff",
       },
-      fontFamily: 'Consolas, "Courier New", monospace',
+      fontFamily: '"MesloLGS NF", "JetBrainsMono NF", Consolas, "Courier New", monospace',
       fontSize: 14,
+      letterSpacing: 0,
+      allowProposedApi: true,
       allowTransparency: true,
     });
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
-    term.open(terminalRef.current);
-    fitAddon.fit();
+
+    // Wait for fonts to be ready before opening the terminal to prevent glyph caching issues
+    document.fonts.ready.then(() => {
+      if (!terminalRef.current) return;
+      term.open(terminalRef.current);
+      fitAddon.fit();
+      // Force a refresh after a small delay to ensure canvas glyphs are updated
+      setTimeout(() => term.refresh(0, term.rows - 1), 200);
+    });
 
     xtermRef.current = term;
 
@@ -59,36 +69,43 @@ function Terminal() {
     };
 
 
-    const setupPty = async () => {
+    const setupPty = async (args: string[] | null = null) => {
       try {
-        term.write("Registering event listeners...\r\n");
-        
+        // 1. Clear previous PTY-specific listeners
+        ptyListenersRef.current.forEach(u => u());
+        ptyListenersRef.current = [];
+
+        // 2. Set up new PTY data listener
         const unPty = await listen<{data: string}>("pty-data", (event) => {
-          term.write("\x1b[34m[D]\x1b[0m");
           handlePtyData(event.payload.data);
         });
-        unlistenRefs.current.push(unPty);
+        ptyListenersRef.current.push(unPty);
 
-        const unReady = await listen("pty-ready-global", () => {
-          term.write("\x1b[32m[READY]\x1b[0m\r\n");
-        });
-        unlistenRefs.current.push(unReady);
+        // 3. Optional: other PTY events
+        const unReady = await listen("pty-ready-global", () => {});
+        ptyListenersRef.current.push(unReady);
 
-        const unHB = await listen("pty-heartbeat", () => {
-          term.write("\x1b[35m[HB]\x1b[0m");
-        });
-        unlistenRefs.current.push(unHB);
-
-        term.write("Invoking start_pty (Targeted)...\r\n");
-        await invoke("start_pty", { rows: term.rows, cols: term.cols });
-        term.write("Backend initialized successfully.\r\n");
+        // 4. Start the backend PTY
+        await invoke("start_pty", { rows: term.rows, cols: term.cols, args });
       } catch (e) {
         term.write(`\r\n\x1b[31mSetup Error: ${e}\x1b[0m\r\n`);
-        console.error("PTY Setup Error:", e);
       }
     };
 
+    // Initial shell
     setupPty();
+
+    // Persistent Session Listener (never cleared by setupPty)
+    listen<{data: string}>("start-session", (event) => {
+      try {
+        const args = JSON.parse(event.payload.data);
+        term.reset();
+        term.write(`\x1b[32mStarting session: ${args.join(" ")}\x1b[0m\r\n`);
+        setupPty(args);
+      } catch (e) {
+        console.error("Failed to parse session args:", e);
+      }
+    }).then(u => unlistenRefs.current.push(u));
 
     term.onData((data) => {
       invoke("write_pty", { data }).catch(() => {});
@@ -107,6 +124,7 @@ function Terminal() {
       window.removeEventListener("resize", handleResize);
       term.dispose();
       unlistenRefs.current.forEach(u => u());
+      ptyListenersRef.current.forEach(u => u());
     };
   }, []);
 

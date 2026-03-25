@@ -3,15 +3,26 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { Music, Volume2, Clock, Play, Pause, SkipBack, SkipForward, Terminal as TerminalIcon } from "lucide-react";
 
+interface TerminalShortcut {
+  id: string;
+  label: string;
+  cmd: string;
+}
+
 interface AppSettings {
   plex_url: string;
   plex_token: string;
   accent_color: string;
+  terminal_shortcuts: TerminalShortcut[];
 }
 
 interface MediaInfo {
   title: string;
   artist: string;
+  album: string;
+  thumb: string;
+  duration_ms: number;
+  view_offset_ms: number;
   is_playing: boolean;
   session_id: string;
   machine_id: string;
@@ -28,11 +39,13 @@ function App() {
   );
 
   const fetchMedia = () => {
-    invoke<MediaInfo>("get_media_info").then((info) => {
-      if (info && info.title !== "Nothing Playing") {
+    invoke<MediaInfo | null>("get_media_info")
+      .then((info) => {
         setMediaInfo(info);
-      }
-    }).catch(() => {});
+      })
+      .catch(() => {
+        setMediaInfo(null);
+      });
   };
 
   useEffect(() => {
@@ -44,7 +57,9 @@ function App() {
     invoke<number>("get_volume").then(setVolume);
     fetchMedia();
 
-    const pollInterval = setInterval(fetchMedia, 5000);
+    // The backend provides most updates via "media-change" event,
+    // so we only do a slow manual refresh as a fallback.
+    const pollInterval = setInterval(fetchMedia, 30000);
     const timeInterval = setInterval(() => {
       setTime(new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }));
     }, 60000);
@@ -146,7 +161,13 @@ function App() {
               />
             )}
           </div>
-          <div className="status-item" onClick={() => invoke("toggle_terminal_panel")}>
+          <div className="status-item" 
+            onClick={() => invoke("toggle_terminal_panel")}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              invoke("show_terminal_context_menu");
+            }}
+          >
             <TerminalIcon size={16} />
           </div>
           <div className="status-item">
@@ -158,5 +179,6 @@ function App() {
     </div>
   );
 }
+
 
 export default App;

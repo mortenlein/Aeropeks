@@ -12,8 +12,8 @@ use windows::Win32::UI::Shell::{
     SHAppBarMessage, APPBARDATA, ABM_NEW, ABM_SETPOS, ABM_QUERYPOS, ABE_TOP
 };
 use windows::Win32::Foundation::{HWND, RECT};
-use tauri::{Window, Manager, Emitter};
-use tauri::menu::{Menu, MenuItem};
+use tauri::{Window, Manager, Emitter, AppHandle, State};
+use tauri::menu::{Menu, MenuItem, MenuEvent, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use std::thread;
 use std::time::Duration;
@@ -21,13 +21,32 @@ use serde::{Serialize, Deserialize};
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem, MasterPty};
 use std::io::{Write, Read};
 use base64::{Engine as _, engine::general_purpose};
+use serde_json;
 
 #[derive(Serialize, Clone)]
 struct PtyPayload {
     data: String,
 }
 
-// ── Settings ────────────────────────────────────────────────────────
+fn default_accent_color() -> String {
+    "#22c55e".to_string()
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct TerminalShortcut {
+    id: String,
+    label: String,
+    cmd: String,
+}
+
+fn default_shortcuts() -> Vec<TerminalShortcut> {
+    vec![
+        TerminalShortcut { id: "ssh-home".to_string(), label: "SSH: Home Lab (pi@homeserver)".to_string(), cmd: "ssh pi@homeserver.local".to_string() },
+        TerminalShortcut { id: "ssh-prod".to_string(), label: "SSH: Production (root@vps)".to_string(), cmd: "ssh root@production-vps".to_string() },
+        TerminalShortcut { id: "git-status".to_string(), label: "Git Status".to_string(), cmd: "git status".to_string() },
+        TerminalShortcut { id: "git-fetch".to_string(), label: "Git Fetch All".to_string(), cmd: "git fetch --all".to_string() },
+    ]
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct AppSettings {
@@ -35,10 +54,8 @@ struct AppSettings {
     plex_token: String,
     #[serde(default = "default_accent_color")]
     accent_color: String,
-}
-
-fn default_accent_color() -> String {
-    "#22c55e".to_string()
+    #[serde(default = "default_shortcuts")]
+    terminal_shortcuts: Vec<TerminalShortcut>,
 }
 
 type SharedSettings = Arc<Mutex<AppSettings>>;
@@ -66,7 +83,34 @@ fn fetch_settings_helper(handle: tauri::AppHandle) -> AppSettings {
         plex_url: "http://localhost:32400".to_string(),
         plex_token: "".to_string(),
         accent_color: "#22c55e".to_string(),
+        terminal_shortcuts: default_shortcuts(),
     }
+}
+
+#[tauri::command]
+fn show_terminal_context_menu(window: tauri::Window, state: tauri::State<'_, SharedSettings>) -> Result<(), String> {
+    let handle = window.app_handle();
+    let settings = state.lock().map_err(|e| e.to_string())?;
+    
+    let mut items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = Vec::new();
+    
+    for (i, shortcut) in settings.terminal_shortcuts.iter().enumerate() {
+        if i > 0 && shortcut.id.contains("git") && !settings.terminal_shortcuts[i-1].id.contains("git") {
+            if let Ok(sep) = PredefinedMenuItem::separator(handle) {
+                items.push(Box::new(sep));
+            }
+        }
+        
+        let item = MenuItem::with_id(handle, &shortcut.id, &shortcut.label, true, None::<&str>).map_err(|e| e.to_string())?;
+        items.push(Box::new(item));
+    }
+    
+    // Convert Vec<Box<dyn IsMenuItem>> to Vec<&dyn IsMenuItem> for with_items
+    let item_refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = items.iter().map(|b| b.as_ref()).collect();
+    let menu = Menu::with_items(handle, &item_refs).map_err(|e| e.to_string())?;
+
+    window.popup_menu(&menu).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -104,9 +148,29 @@ struct MediaInfo {
 
 fn fetch_plex_media(settings: &AppSettings) -> Option<MediaInfo> {
     let url = format!("{}/status/sessions?X-Plex-Token={}", settings.plex_url.trim_end_matches('/'), settings.plex_token);
-    let client = reqwest::blocking::Client::builder().timeout(Duration::from_secs(3)).build().ok()?;
-    let resp = client.get(&url).header("Accept", "application/json").send().ok()?;
-    let json: serde_json::Value = resp.json().ok()?;
+    // println!("Plex DEBUG: Fetching from {}", settings.plex_url);
+    
+    let client = reqwest::blocking::Client::builder().timeout(Duration::from_secs(5)).build().ok()?;
+    let resp = match client.get(&url).header("Accept", "application/json").send() {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Plex ERROR: Request failed: {}", e);
+            return None;
+        }
+    };
+    
+    if !resp.status().is_success() {
+        eprintln!("Plex ERROR: HTTP status {}", resp.status());
+        return None;
+    }
+
+    let json: serde_json::Value = match resp.json() {
+        Ok(j) => j,
+        Err(e) => {
+            eprintln!("Plex ERROR: JSON parse failed: {}", e);
+            return None;
+        }
+    };
     
     let container = json.get("MediaContainer")?;
     let metadata = container.get("Metadata")?.as_array()?;
@@ -302,7 +366,7 @@ fn toggle_terminal_panel(handle: tauri::AppHandle) {
                 let m_size = monitor.size();
                 let width = 860;
                 let height = 460;
-                let x = (m_size.width as i32 - width) / 2;
+                let x = m_size.width as i32 - width - 12;
                 let y = 36;
                 let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize { width: width as u32, height: height as u32 })).ok();
                 let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y })).ok();
@@ -315,8 +379,17 @@ fn toggle_terminal_panel(handle: tauri::AppHandle) {
 }
 
 #[tauri::command]
-fn start_pty(rows: u16, cols: u16, state: tauri::State<'_, TerminalState>, window: Window) -> Result<(), String> {
-    println!("INFO: start_pty called with {}x{}", rows, cols);
+fn start_pty(rows: u16, cols: u16, args: Option<Vec<String>>, state: tauri::State<'_, TerminalState>, window: Window) -> Result<(), String> {
+    println!("INFO: start_pty called with {}x{}, args: {:?}", rows, cols, args);
+    
+    // Kill existing master if any to allow restart
+    {
+        let mut m = state.master.lock().unwrap();
+        *m = None;
+        let mut w = state.writer.lock().unwrap();
+        *w = None;
+    }
+
     let pty_system = NativePtySystem::default();
     let pair = pty_system.openpty(PtySize {
         rows,
@@ -325,7 +398,21 @@ fn start_pty(rows: u16, cols: u16, state: tauri::State<'_, TerminalState>, windo
         pixel_height: 0,
     }).map_err(|e| e.to_string())?;
 
-    let cmd = CommandBuilder::new("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+    let shell_path = "C:\\Program Files\\Git\\bin\\bash.exe";
+    let mut cmd = CommandBuilder::new(shell_path);
+    
+    if let Some(cmd_args) = args {
+        // Use --login to ensure profile is loaded, and -c to run the command
+        cmd.arg("--login");
+        cmd.arg("-c");
+        // Join args with spaces to form the full command string for bash -c
+        cmd.arg(cmd_args.join(" "));
+    } else {
+        // Default to interactive login shell
+        cmd.arg("--login");
+        cmd.arg("-i");
+    }
+
     let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
     
     thread::spawn(move || {
@@ -459,6 +546,31 @@ fn cleanup_app_bar(hwnd_v: HWND) {
 
 fn main() {
     tauri::Builder::default()
+        .on_menu_event(|app, event| {
+            let id = event.id().as_ref();
+            let handle = app.app_handle();
+            let state = handle.state::<SharedSettings>();
+            let settings = match state.lock() {
+                Ok(s) => s.clone(),
+                Err(_) => return,
+            };
+
+            let shortcut = settings.terminal_shortcuts.iter().find(|s| s.id == id);
+            
+            if let Some(s) = shortcut {
+                // Parse command into args (simple split for now)
+                let final_args: Vec<String> = s.cmd.split_whitespace().map(|part| part.to_string()).collect();
+                
+                // 1. Toggle terminal panel ON if hidden
+                if let Some(window) = handle.get_webview_window("terminal-panel") {
+                    if !window.is_visible().unwrap_or(false) {
+                        toggle_terminal_panel(handle.clone());
+                    }
+                }
+                // 2. Emit start-session to the terminal window
+                let _ = handle.emit_to("terminal-panel", "start-session", PtyPayload { data: serde_json::to_string(&final_args).unwrap_or_default() });
+            }
+        })
         .setup(|app| {
             let app_handle = app.handle().clone();
             let app_handle_media = app.handle().clone();
@@ -568,7 +680,14 @@ fn main() {
 
             thread::spawn(move || {
                 loop {
-                    let settings = match media_settings.lock() { Ok(s) => s.clone(), Err(_) => { thread::sleep(Duration::from_secs(5)); continue; } };
+                    let settings = match media_settings.lock() { 
+                        Ok(s) => s.clone(), 
+                        Err(_) => { 
+                            eprintln!("Plex ERROR: Failed to lock shared settings");
+                            thread::sleep(Duration::from_secs(5)); 
+                            continue; 
+                        } 
+                    };
                     let current = fetch_plex_media(&settings);
                     let _ = app_handle_media.emit("media-change", current);
                     thread::sleep(Duration::from_secs(3));
@@ -611,7 +730,8 @@ fn main() {
             toggle_terminal_panel,
             start_pty,
             write_pty,
-            resize_pty
+            resize_pty,
+            show_terminal_context_menu
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
