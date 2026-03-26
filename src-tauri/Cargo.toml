@@ -23,8 +23,29 @@ windows = { version = "0.58.0", features = [
     "Win32_UI_Shell",
     "Win32_Media_Audio",
     "Win32_Media_Audio_Endpoints",
-    "Win32_System_Com"
+    "Win32_System_Com",
+    "Win32_System_Power",
+    "Win32_System_SystemInformation",
+    "Win32_Devices_Bluetooth",
+    "Win32_Devices_Enumeration_Pnp",
+    "Win32_System_SystemServices",
+    "Win32_System_Shutdown",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Media_Control",
+    "Foundation",
+    "Foundation_Collections",
+    "Storage_Streams"
 ] }
+walkdir = "2"
+shell-words = "1.1"
+open = "5"
+tauri-plugin-shell = "2.0.0"
+tauri-plugin-global-shortcut = "2.0.0"
+tokio = { version = "1", features = ["full"] }
+obws = "0.12"
+chrono = "0.4"
+serde_with = "3.9"
+windows-future = "0.3.2"
 
 [profile.release]
 panic = "abort"

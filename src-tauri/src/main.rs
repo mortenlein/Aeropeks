@@ -12,52 +12,90 @@ use windows::Win32::UI::Shell::{
     SHAppBarMessage, APPBARDATA, ABM_NEW, ABM_SETPOS, ABM_QUERYPOS, ABE_TOP
 };
 use windows::Win32::Foundation::{HWND, RECT};
+use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
 use tauri::{Window, Manager, Emitter, AppHandle, State};
-use tauri::menu::{Menu, MenuItem, MenuEvent, PredefinedMenuItem};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use std::thread;
 use std::time::Duration;
+use tokio::time::interval;
 use serde::{Serialize, Deserialize};
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem, MasterPty};
 use std::io::{Write, Read};
 use base64::{Engine as _, engine::general_purpose};
 use serde_json;
+use walkdir::WalkDir;
+use tauri_plugin_shell::ShellExt;
 
 #[derive(Serialize, Clone)]
 struct PtyPayload {
     data: String,
 }
 
-fn default_accent_color() -> String {
-    "#22c55e".to_string()
-}
+fn default_accent_color() -> String { "#22c55e".to_string() }
+fn default_plex_url() -> String { "http://localhost:32400".to_string() }
+fn default_plex_token() -> String { "".to_string() }
+fn default_true() -> bool { true }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct TerminalShortcut {
     id: String,
     label: String,
     cmd: String,
+    shortcut: String,
 }
 
 fn default_shortcuts() -> Vec<TerminalShortcut> {
     vec![
-        TerminalShortcut { id: "ssh-home".to_string(), label: "SSH: Home Lab (pi@homeserver)".to_string(), cmd: "ssh pi@homeserver.local".to_string() },
-        TerminalShortcut { id: "ssh-prod".to_string(), label: "SSH: Production (root@vps)".to_string(), cmd: "ssh root@production-vps".to_string() },
-        TerminalShortcut { id: "git-status".to_string(), label: "Git Status".to_string(), cmd: "git status".to_string() },
-        TerminalShortcut { id: "git-fetch".to_string(), label: "Git Fetch All".to_string(), cmd: "git fetch --all".to_string() },
+        TerminalShortcut { id: "ssh-home".to_string(), label: "SSH: Home Lab (pi@homeserver)".to_string(), cmd: "ssh pi@homeserver.local".to_string(), shortcut: "".to_string() },
+        TerminalShortcut { id: "ssh-prod".to_string(), label: "SSH: Production (root@vps)".to_string(), cmd: "ssh root@production-vps".to_string(), shortcut: "".to_string() },
+        TerminalShortcut { id: "git-status".to_string(), label: "Git Status".to_string(), cmd: "git status".to_string(), shortcut: "".to_string() },
+        TerminalShortcut { id: "git-fetch".to_string(), label: "Git Fetch All".to_string(), cmd: "git fetch --all".to_string(), shortcut: "".to_string() },
     ]
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct AppSettings {
+    #[serde(default = "default_plex_url")]
     plex_url: String,
+    #[serde(default)]
     plex_token: String,
     #[serde(default = "default_accent_color")]
     accent_color: String,
     #[serde(default = "default_shortcuts")]
     terminal_shortcuts: Vec<TerminalShortcut>,
+    #[serde(default)]
+    weather_location: String,
+    #[serde(default)]
+    weather_lat: Option<f64>,
+    #[serde(default)]
+    weather_lon: Option<f64>,
+    #[serde(default)]
+    obs_websocket_url: String,
+    #[serde(default)]
+    obs_websocket_password: String,
+    #[serde(default = "default_true")]
+    use_24h: bool,
 }
 
+impl Default for AppSettings {
+    fn default() -> Self {
+        AppSettings {
+            plex_url: "http://localhost:32400".to_string(),
+            plex_token: "".to_string(),
+            accent_color: "#22c55e".to_string(),
+            terminal_shortcuts: default_shortcuts(),
+            weather_location: "Oslo, Norge".to_string(),
+            weather_lat: Some(59.9127),
+            weather_lon: Some(10.7461),
+            obs_websocket_url: "".to_string(),
+            obs_websocket_password: "".to_string(),
+            use_24h: true,
+        }
+    }
+}
+
+// Shared settings type
 type SharedSettings = Arc<Mutex<AppSettings>>;
 
 struct TerminalState {
@@ -67,6 +105,7 @@ struct TerminalState {
 
 fn get_settings_path(handle: tauri::AppHandle) -> PathBuf {
     let mut path = handle.path().app_data_dir().unwrap();
+    eprintln!("DEBUG: App Data Dir: {:?}", path);
     fs::create_dir_all(&path).ok();
     path.push("settings.json");
     path
@@ -74,16 +113,19 @@ fn get_settings_path(handle: tauri::AppHandle) -> PathBuf {
 
 fn fetch_settings_helper(handle: tauri::AppHandle) -> AppSettings {
     let path = get_settings_path(handle);
-    if let Ok(content) = fs::read_to_string(path) {
-        if let Ok(settings) = serde_json::from_str(&content) {
-            return settings;
-        }
-    }
-    AppSettings {
-        plex_url: "http://localhost:32400".to_string(),
-        plex_token: "".to_string(),
-        accent_color: "#22c55e".to_string(),
-        terminal_shortcuts: default_shortcuts(),
+    println!("DEBUG: Checking settings file at {:?}. Exists: {}", path, path.exists());
+    match fs::read_to_string(&path) {
+        Ok(content) => {
+            match serde_json::from_str::<AppSettings>(&content) {
+                Ok(settings) => return settings,
+                Err(e) => {
+                    eprintln!("DEBUG ERROR: Failed to parse settings at {:?}: {}. Falling back to default.", path, e);
+                    // Try to migrate or just return default
+                    return AppSettings::default();
+                }
+            }
+        },
+        Err(_) => AppSettings::default(),
     }
 }
 
@@ -115,12 +157,24 @@ fn show_terminal_context_menu(window: tauri::Window, state: tauri::State<'_, Sha
 
 #[tauri::command]
 fn save_settings(settings: AppSettings, handle: tauri::AppHandle, state: tauri::State<'_, SharedSettings>) -> Result<(), String> {
-    let path = get_settings_path(handle);
+    println!("DEBUG: Saving settings. Plex URL: {}, Token Length: {} chars", settings.plex_url, settings.plex_token.len());
+    let path = get_settings_path(handle.clone());
     let content = serde_json::to_string(&settings).map_err(|e| e.to_string())?;
     fs::write(path, content).map_err(|e| e.to_string())?;
     
     let mut current_settings = state.lock().map_err(|e| e.to_string())?;
     *current_settings = settings;
+    handle.emit("settings-changed", current_settings.clone()).ok();
+    Ok(())
+}
+
+#[tauri::command]
+fn set_window_height(window: tauri::Window, height: u32) -> Result<(), String> {
+    let size = tauri::Size::Physical(tauri::PhysicalSize {
+        width: window.inner_size().unwrap_or(tauri::PhysicalSize { width: 1920, height: 32 }).width,
+        height,
+    });
+    window.set_size(size).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -132,42 +186,46 @@ fn get_settings(state: tauri::State<'_, SharedSettings>) -> Result<AppSettings, 
 
 // ── Media Info ──────────────────────────────────────────────────────
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 struct MediaInfo {
     title: String,
     artist: String,
     album: String,
-    thumb: String,
+    is_playing: bool,
+    thumbnail: Option<String>,
     duration_ms: u64,
     view_offset_ms: u64,
-    is_playing: bool,
-    session_id: String,
-    machine_id: String,
-    address: String,
+    source: String,
+    session_id: Option<String>,
+    machine_id: Option<String>,
+    address: Option<String>,
 }
 
-fn fetch_plex_media(settings: &AppSettings) -> Option<MediaInfo> {
-    let url = format!("{}/status/sessions?X-Plex-Token={}", settings.plex_url.trim_end_matches('/'), settings.plex_token);
-    // println!("Plex DEBUG: Fetching from {}", settings.plex_url);
+async fn fetch_plex_media(plex_url: &str, plex_token: &str) -> Option<MediaInfo> {
+    if plex_url.is_empty() { return None; }
+    println!("DEBUG: fetch_plex_media checking: {}", plex_url);
     
-    let client = reqwest::blocking::Client::builder().timeout(Duration::from_secs(5)).build().ok()?;
-    let resp = match client.get(&url).header("Accept", "application/json").send() {
+    let url = format!("{}/status/sessions?X-Plex-Token={}", plex_url.trim_end_matches('/'), plex_token);
+    // println!("Plex DEBUG: Fetching from server...");
+    
+    let client = reqwest::Client::builder().timeout(Duration::from_secs(3)).build().ok()?;
+    let resp = match client.get(&url).header("Accept", "application/json").send().await {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("Plex ERROR: Request failed: {}", e);
+            eprintln!("Plex DEBUG: Request failed: {}", e);
             return None;
         }
     };
     
     if !resp.status().is_success() {
-        eprintln!("Plex ERROR: HTTP status {}", resp.status());
+        eprintln!("Plex DEBUG: API returned status {}", resp.status());
         return None;
     }
 
-    let json: serde_json::Value = match resp.json() {
+    let json: serde_json::Value = match resp.json().await {
         Ok(j) => j,
         Err(e) => {
-            eprintln!("Plex ERROR: JSON parse failed: {}", e);
+            eprintln!("Plex DEBUG: JSON parse error: {}", e);
             return None;
         }
     };
@@ -175,29 +233,33 @@ fn fetch_plex_media(settings: &AppSettings) -> Option<MediaInfo> {
     let container = json.get("MediaContainer")?;
     let metadata = container.get("Metadata")?.as_array()?;
 
+    // println!("Plex DEBUG: Found {} active sessions", metadata.len());
+
     for item in metadata {
         let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let artist = item.get("grandparentTitle").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let album = item.get("parentTitle").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let thumb = item.get("thumb").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let thumb = item.get("thumb").and_then(|v| v.as_str()).map(|v| v.to_string());
         let duration_ms = item.get("duration").and_then(|v| v.as_u64()).unwrap_or(0);
         let view_offset_ms = item.get("viewOffset").and_then(|v| v.as_u64()).unwrap_or(0);
-        let session_id = item.get("sessionKey").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let session_id = item.get("sessionKey").and_then(|v| v.as_str()).map(|v| v.to_string());
 
         let player = item.get("Player").and_then(|v| v.as_object());
-        let machine_id = player.and_then(|p| p.get("machineIdentifier")).and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let address = player.and_then(|p| p.get("address")).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let machine_id = player.and_then(|p| p.get("machineIdentifier")).and_then(|v| v.as_str()).map(|v| v.to_string());
+        let address = player.and_then(|p| p.get("address")).and_then(|v| v.as_str()).map(|v| v.to_string());
         let state = player.and_then(|p| p.get("state")).and_then(|v| v.as_str()).unwrap_or("");
 
         if !title.is_empty() {
+            // println!("Plex DEBUG: Session '{}' - {}", title, state);
             return Some(MediaInfo {
                 title,
                 artist,
                 album,
-                thumb,
+                thumbnail: thumb,
                 duration_ms,
                 view_offset_ms,
                 is_playing: state == "playing",
+                source: "plex".to_string(),
                 session_id,
                 machine_id,
                 address,
@@ -224,64 +286,53 @@ fn get_album_art(thumb: String, state: tauri::State<'_, SharedSettings>) -> Resu
 }
 
 #[tauri::command]
-fn get_media_info(state: tauri::State<'_, SharedSettings>) -> Result<MediaInfo, String> {
-    let settings = state.lock().map_err(|e| e.to_string())?;
-    fetch_plex_media(&settings).ok_or("Nothing Playing".to_string())
-}
-
-#[tauri::command]
-fn plex_control(command: String, session_id: String, machine_id: String, address: String, state: tauri::State<'_, SharedSettings>) -> Result<(), String> {
-    let settings = state.lock().map_err(|e| e.to_string())?;
+async fn plex_control(command: String, _session_id: String, machine_id: String, address: String, state: tauri::State<'_, SharedSettings>) -> Result<(), String> {
+    let (plex_url, plex_token) = {
+        let settings = state.lock().map_err(|e| e.to_string())?;
+        (settings.plex_url.clone(), settings.plex_token.clone())
+    };
     
     let plex_command = match command.as_str() {
-        "play" => "play",
+        "play" | "play_pause" => "play",
         "pause" => "pause",
         "next" => "skipNext",
-        "prev" => "skipPrevious",
+        "previous" | "prev" => "skipPrevious",
         _ => return Err("Invalid command".to_string()),
     };
 
-    let client = reqwest::blocking::Client::builder().timeout(Duration::from_secs(3)).build().unwrap_or_default();
+    let client = reqwest::Client::builder().timeout(Duration::from_secs(3)).build().unwrap_or_default();
 
-    // Build a unique command ID from current time
     let command_id = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(1);
 
     let mut attempts: Vec<(String, &str)> = vec![
-        // Attempt 1: Plex server proxy to player
         (format!("{}/player/proxy/playback/{}?X-Plex-Target-Client-Identifier={}&X-Plex-Token={}&commandID={}",
-            settings.plex_url.trim_end_matches('/'), plex_command, machine_id, settings.plex_token, command_id), "GET"),
+            plex_url.trim_end_matches('/'), plex_command, machine_id, plex_token, command_id), "GET"),
     ];
 
     if !address.is_empty() {
-        // Attempt 2: Direct to Plexamp (port 32500) — POST
         attempts.push((format!("http://{}:32500/player/playback/{}?commandID={}&X-Plex-Token={}",
-            address, plex_command, command_id, settings.plex_token), "POST"));
-        // Attempt 3: Direct to Plexamp (port 32500) — GET
+            address, plex_command, command_id, plex_token), "POST"));
         attempts.push((format!("http://{}:32500/player/playback/{}?commandID={}&X-Plex-Token={}",
-            address, plex_command, command_id, settings.plex_token), "GET"));
-        // Attempt 4: Via Plex server system/players
+            address, plex_command, command_id, plex_token), "GET"));
         attempts.push((format!("{}/system/players/{}/playback/{}?X-Plex-Token={}",
-            settings.plex_url.trim_end_matches('/'), address, plex_command, settings.plex_token), "GET"));
+            plex_url.trim_end_matches('/'), address, plex_command, plex_token), "GET"));
     }
 
     for (url, method) in &attempts {
         let req = if *method == "POST" { client.post(url) } else { client.get(url) };
-        match req
+        if let Ok(resp) = req
             .header("X-Plex-Client-Identifier", "aeropeks")
             .header("X-Plex-Target-Client-Identifier", &machine_id)
-            .header("X-Plex-Token", &settings.plex_token)
+            .header("X-Plex-Token", &plex_token)
             .send()
+            .await 
         {
-            Ok(resp) => {
-                println!("Plex control {} {} → {}", method, url, resp.status());
-                if resp.status().is_success() || resp.status().as_u16() == 200 {
-                    return Ok(());
-                }
+            if resp.status().is_success() {
+                return Ok(());
             }
-            Err(e) => println!("Plex control {} {} failed: {}", method, url, e),
         }
     }
 
@@ -319,6 +370,569 @@ fn set_volume(volume: f32) {
             }
         }
     }
+}
+
+// ── Launcher ────────────────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SearchResult {
+    id: String,
+    title: String,
+    description: String,
+    icon: String,      // Base64 or icon name
+    action_type: String, // 'app', 'web', 'system', 'cmd'
+    action_value: String,
+}
+
+#[tauri::command]
+fn search_query(query: String) -> Result<Vec<SearchResult>, String> {
+    let mut results = Vec::new();
+    let query_lower = query.to_lowercase().trim().to_string();
+
+    if query_lower.is_empty() {
+        return Ok(results);
+    }
+
+    // 1. Web Search (Prefix 'g ' or 'google ')
+    if query_lower.starts_with("g ") || query_lower.starts_with("google ") {
+        let q = if query_lower.starts_with("g ") { &query[2..] } else { &query[7..] };
+        results.push(SearchResult {
+            id: "web-google".to_string(),
+            title: format!("Search Google for '{}'", q),
+            description: "Open in default browser".to_string(),
+            icon: "Search".to_string(),
+            action_type: "web".to_string(),
+            action_value: format!("https://www.google.com/search?q={}", urlencoding::encode(q)),
+        });
+    }
+
+    // 2. System Commands
+    let sys_cmds = vec![
+        ("lock", "Lock Workstation", "system", "rundll32.exe user32.dll,LockWorkStation"),
+        ("shutdown", "Shut Down", "system", "shutdown /s /t 0"),
+        ("restart", "Restart", "system", "shutdown /r /t 0"),
+        ("sleep", "Sleep", "system", "rundll32.exe powrprof.dll,SetSuspendState 0,1,0"),
+    ];
+
+    for (cmd, label, atype, aval) in sys_cmds {
+        if cmd.contains(&query_lower) {
+            results.push(SearchResult {
+                id: format!("sys-{}", cmd),
+                title: label.to_string(),
+                description: format!("Execute: {}", cmd),
+                icon: "Settings".to_string(),
+                action_type: atype.to_string(),
+                action_value: aval.to_string(),
+            });
+        }
+    }
+
+    // 3. Application Search (Simple Start Menu Scan)
+    let mut start_menu_paths = vec![
+        "C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs".to_string(),
+    ];
+    if let Ok(profile) = std::env::var("USERPROFILE") {
+        start_menu_paths.push(format!("{}\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs", profile));
+    }
+
+    for path in start_menu_paths {
+        for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
+            let file_name = entry.file_name().to_string_lossy();
+                if file_name.to_lowercase().contains(&query_lower) && file_name.ends_with(".lnk") {
+                    let name = file_name.trim_end_matches(".lnk").to_string();
+                    results.push(SearchResult {
+                        id: format!("app-{}", name),
+                        title: name,
+                        description: entry.path().to_string_lossy().to_string(),
+                        icon: "AppWindow".to_string(),
+                        action_type: "app".to_string(),
+                        action_value: entry.path().to_string_lossy().to_string(),
+                    });
+                }
+            }
+        }
+
+    Ok(results)
+}
+
+#[tauri::command]
+fn launch_result(handle: AppHandle, result: SearchResult) -> Result<(), String> {
+    match result.action_type.as_str() {
+        "web" => {
+            let _ = open::that(result.action_value);
+        }
+        "app" | "system" => {
+            let shell = handle.shell();
+            if result.action_value.contains(" ") && result.action_type == "system" {
+                let parts: Vec<&str> = result.action_value.split_whitespace().collect();
+                let cmd = parts[0];
+                let args = &parts[1..];
+                shell.command(cmd).args(args).spawn().map_err(|e| e.to_string())?;
+            } else {
+                shell.command("cmd").args(["/C", "start", "", &result.action_value]).spawn().map_err(|e| e.to_string())?;
+            }
+        }
+        _ => return Err("Unknown action type".to_string()),
+    }
+
+    if let Some(window) = handle.get_webview_window("launcher-panel") {
+        let _ = window.hide().ok();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn toggle_launcher(handle: tauri::AppHandle) {
+    if let Some(window) = handle.get_webview_window("launcher-panel") {
+        let is_visible = window.is_visible().unwrap_or(false);
+        if is_visible {
+            let _ = window.hide().ok();
+        } else {
+            let _ = window.show().ok();
+            let _ = window.set_focus().ok();
+        }
+    }
+}
+
+// ── Power & Battery ────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct BatteryStatus {
+    percentage: u8,
+    is_charging: bool,
+    has_battery: bool,
+}
+
+#[tauri::command]
+fn get_battery_status() -> BatteryStatus {
+    unsafe {
+        let mut status = SYSTEM_POWER_STATUS::default();
+        if GetSystemPowerStatus(&mut status).is_ok() {
+            return BatteryStatus {
+                percentage: status.BatteryLifePercent,
+                is_charging: (status.ACLineStatus == 1),
+                has_battery: status.BatteryFlag != 128,
+            };
+        }
+    }
+    BatteryStatus { percentage: 0, is_charging: false, has_battery: false }
+}
+
+#[tauri::command]
+fn system_power_action(action: String) {
+    match action.as_str() {
+        "shutdown" => { let _ = std::process::Command::new("shutdown").args(["/s", "/t", "0"]).spawn(); },
+        "restart" => { let _ = std::process::Command::new("shutdown").args(["/r", "/t", "0"]).spawn(); },
+        "sleep" => { unsafe { let _ = windows::Win32::System::Power::SetSuspendState(false, false, false); } },
+        "lock" => { unsafe { let _ = windows::Win32::System::Shutdown::LockWorkStation(); } },
+        _ => {},
+    }
+}
+
+// ── Microphone ──────────────────────────────────────────────────────
+
+use windows::Win32::Media::Audio::{eCapture};
+
+#[tauri::command]
+fn get_mic_status() -> Result<bool, String> {
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).map_err(|e| e.to_string())?;
+        let device = enumerator.GetDefaultAudioEndpoint(eCapture, eConsole).map_err(|e| e.to_string())?;
+        let volume = device.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None).map_err(|e| e.to_string())?;
+        Ok(volume.GetMute().map_err(|e| e.to_string())?.as_bool())
+    }
+}
+
+#[tauri::command]
+fn toggle_mic_mute() -> Result<bool, String> {
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).map_err(|e| e.to_string())?;
+        let device = enumerator.GetDefaultAudioEndpoint(eCapture, eConsole).map_err(|e| e.to_string())?;
+        let volume = device.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None).map_err(|e| e.to_string())?;
+        let current_mute = volume.GetMute().map_err(|e| e.to_string())?;
+        volume.SetMute(!current_mute, std::ptr::null()).map_err(|e| e.to_string())?;
+        Ok(!current_mute.as_bool())
+    }
+}
+
+
+// ── Bluetooth & Weather ─────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct WeatherDetailed {
+    temp: f32,
+    symbol: String,
+    precip: f32,
+    place_name: String,
+    hourly: Vec<HourlyForecast>,
+    daily: Vec<DailyForecast>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct HourlyForecast {
+    time: String,
+    temp: f32,
+    symbol: String,
+    precip: f32,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct DailyForecast {
+    date: String,
+    temp_min: f32,
+    temp_max: f32,
+    symbol: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct LocationSearchResult {
+    name: String,
+    lat: f64,
+    lon: f64,
+    country: String,
+    url_path: String,
+}
+
+#[tauri::command]
+async fn get_weather(lat: f64, lon: f64, place_name: String) -> Result<WeatherDetailed, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("Aeropeks/0.1.0 (https://github.com/mortenlein/Aeropeks)")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let url = format!("https://api.met.no/weatherapi/locationforecast/2.0/compact?lat={:.4}&lon={:.4}", lat, lon);
+    let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+
+    let properties = json.get("properties").ok_or("Invalid forecast data")?;
+    let timeseries = properties.get("timeseries").and_then(|t| t.as_array()).ok_or("No timeseries data")?;
+
+    // Current
+    let latest = timeseries.get(0).ok_or("No current data")?;
+    let instant_data = latest.get("data").and_then(|d| d.get("instant")).and_then(|i| i.get("details")).ok_or("No instant details")?;
+    let temp = instant_data.get("air_temperature").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+    
+    let next_1h = latest.get("data").and_then(|d| d.get("next_1_hours"));
+    let symbol = next_1h.and_then(|n| n.get("summary")).and_then(|s| s.get("symbol_code")).and_then(|v| v.as_str()).unwrap_or("clearsky_day").to_string();
+    let precip = next_1h.and_then(|n| n.get("details")).and_then(|d| d.get("precipitation_amount")).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+
+    // Hourly (next 24 hours)
+    let mut hourly = Vec::new();
+    for i in 0..24.min(timeseries.len()) {
+        let entry = &timeseries[i];
+        let time = entry.get("time").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let details = entry.get("data").and_then(|d| d.get("instant")).and_then(|i| i.get("details")).ok_or("No details")?;
+        let h_temp = details.get("air_temperature").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+        
+        let h_next_1h = entry.get("data").and_then(|d| d.get("next_1_hours"));
+        let h_symbol = h_next_1h.and_then(|n| n.get("summary")).and_then(|s| s.get("symbol_code")).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let h_precip = h_next_1h.and_then(|n| n.get("details")).and_then(|d| d.get("precipitation_amount")).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+
+        hourly.push(HourlyForecast { time, temp: h_temp, symbol: h_symbol, precip: h_precip });
+    }
+
+    // Daily (simple group by day)
+    let mut daily = Vec::new();
+    let mut current_day = String::new();
+    let mut d_min = 100.0;
+    let mut d_max = -100.0;
+    let mut d_symbol = String::new();
+
+    for entry in timeseries {
+        let time = entry.get("time").and_then(|v| v.as_str()).unwrap_or("");
+        let day = time.split('T').next().unwrap_or("");
+        
+        if day != current_day {
+            if !current_day.is_empty() {
+                daily.push(DailyForecast { 
+                    date: current_day.clone(), 
+                    temp_min: d_min as f32, 
+                    temp_max: d_max as f32, 
+                    symbol: d_symbol.clone() 
+                });
+            }
+            current_day = day.to_string();
+            d_min = 100.0;
+            d_max = -100.0;
+            d_symbol = String::new();
+        }
+
+        let details = entry.get("data").and_then(|d| d.get("instant")).and_then(|i| i.get("details")).ok_or("No details")?;
+        let t = details.get("air_temperature").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        if t < d_min { d_min = t; }
+        if t > d_max { d_max = t; }
+
+        if d_symbol.is_empty() {
+            let next_6h = entry.get("data").and_then(|d| d.get("next_6_hours"));
+            d_symbol = next_6h.and_then(|n| n.get("summary")).and_then(|s| s.get("symbol_code")).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        }
+        
+        if daily.len() >= 7 { break; }
+    }
+
+    Ok(WeatherDetailed {
+        temp,
+        symbol,
+        precip,
+        place_name,
+        hourly,
+        daily,
+    })
+}
+
+#[tauri::command]
+async fn search_locations(query: String) -> Result<Vec<LocationSearchResult>, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("Aeropeks/0.1.0 (https://github.com/mortenlein/Aeropeks)")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let url = format!("https://www.yr.no/api/v0/locations/suggest?q={}", urlencoding::encode(&query));
+    let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+
+    let mut results = Vec::new();
+    if let Some(locations) = json.get("_embedded").and_then(|e| e.get("location")).and_then(|l| l.as_array()) {
+        for loc in locations {
+            let name = loc.get("name").and_then(|v| v.as_str()).unwrap_or("Unknown").to_string();
+            let pos = loc.get("position").ok_or("No position")?;
+            let lat = pos.get("lat").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let lon = pos.get("lon").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let country = loc.get("country").and_then(|c| c.get("name")).and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let url_path = loc.get("urlPath").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+            results.push(LocationSearchResult { name, lat, lon, country, url_path });
+        }
+    }
+
+    Ok(results)
+}
+
+#[tauri::command]
+fn get_bluetooth_status() -> bool {
+    unsafe {
+        use windows::Win32::Devices::Bluetooth::{BluetoothFindFirstRadio, BLUETOOTH_FIND_RADIO_PARAMS};
+        let params = BLUETOOTH_FIND_RADIO_PARAMS { dwSize: std::mem::size_of::<BLUETOOTH_FIND_RADIO_PARAMS>() as u32 };
+        let mut radio = windows::Win32::Foundation::HANDLE::default();
+        match BluetoothFindFirstRadio(&params, &mut radio) {
+            Ok(handle) => {
+                let _ = windows::Win32::Foundation::CloseHandle(radio);
+                let _ = windows::Win32::Devices::Bluetooth::BluetoothFindRadioClose(handle);
+                true
+            },
+            Err(_) => false,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct ObsStatus {
+    is_streaming: bool,
+    is_recording: bool,
+}
+
+#[tauri::command]
+async fn get_obs_status(handle: tauri::AppHandle) -> Result<ObsStatus, String> {
+    let settings = {
+        let state = handle.state::<SharedSettings>();
+        let lock = state.lock().map_err(|e| e.to_string())?;
+        lock.clone()
+    };
+
+    if settings.obs_websocket_url.is_empty() {
+        return Ok(ObsStatus { is_streaming: false, is_recording: false });
+    }
+
+    let (host, port) = if let Some(stripped) = settings.obs_websocket_url.strip_prefix("ws://") {
+        let parts: Vec<&str> = stripped.split(':').collect();
+        (parts[0].to_string(), parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(4455))
+    } else {
+        (settings.obs_websocket_url.clone(), 4455)
+    };
+
+    // Connect with a timeout
+    let client = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        obws::Client::connect(host, port, Some(&settings.obs_websocket_password))
+    ).await.map_err(|_| "OBS connection timeout".to_string())?.map_err(|e| e.to_string())?;
+    
+    let stream = client.streaming().status().await.map_err(|e| e.to_string())?;
+    let record = client.recording().status().await.map_err(|e| e.to_string())?;
+
+    Ok(ObsStatus {
+        is_streaming: stream.active,
+        is_recording: record.active,
+    })
+}
+
+
+// ── Media (GSMTC) ───────────────────────────────────────────────────
+
+// ── Media (GSMTC) ───────────────────────────────────────────────────
+
+// MediaUpdate removed, using MediaInfo unified
+
+async fn get_gsmtc_media_internal() -> Result<Option<MediaInfo>, String> {
+    use windows::Media::Control::{
+        GlobalSystemMediaTransportControlsSessionManager,
+        GlobalSystemMediaTransportControlsSession,
+        GlobalSystemMediaTransportControlsSessionPlaybackInfo,
+    };
+    
+    let manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
+        .map_err(|e: windows::core::Error| e.to_string())?
+        .get()
+        .map_err(|e: windows::core::Error| e.to_string())?;
+    
+    let sessions = manager.GetSessions().map_err(|e: windows::core::Error| e.to_string())?;
+    
+    let mut best_session: Option<GlobalSystemMediaTransportControlsSession> = None;
+    let mut best_status = -1;
+    
+    for session in sessions {
+        let session: GlobalSystemMediaTransportControlsSession = session;
+        if let Ok(playback) = session.GetPlaybackInfo() {
+            let playback: GlobalSystemMediaTransportControlsSessionPlaybackInfo = playback;
+            let status = playback.PlaybackStatus().unwrap_or_default().0;
+            let score = match status {
+                4 => 10,
+                5 => 5,
+                _ => 0,
+            };
+            
+            if score > best_status {
+                best_status = score;
+                best_session = Some(session);
+            }
+        }
+    }
+    
+    if let Some(session) = best_session {
+        let playback: GlobalSystemMediaTransportControlsSessionPlaybackInfo = 
+            session.GetPlaybackInfo().map_err(|e: windows::core::Error| e.to_string())?;
+        let media = session.TryGetMediaPropertiesAsync()
+            .map_err(|e: windows::core::Error| e.to_string())?
+            .get()
+            .map_err(|e: windows::core::Error| e.to_string())?;
+        
+        Ok(Some(MediaInfo {
+            title: media.Title().unwrap_or_default().to_string(),
+            artist: media.Artist().unwrap_or_default().to_string(),
+            album: media.AlbumTitle().unwrap_or_default().to_string(),
+            is_playing: playback.PlaybackStatus().unwrap_or_default().0 == 4,
+            thumbnail: None,
+            duration_ms: 0,
+            view_offset_ms: 0,
+            source: "gsmtc".to_string(),
+            session_id: None,
+            machine_id: None,
+            address: None,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+async fn get_active_media_internal(handle: tauri::AppHandle) -> Result<Option<MediaInfo>, String> {
+    // println!("DEBUG: get_active_media_internal checking sources...");
+    // 1. Try GSMTC first (Local system media)
+    if let Ok(Some(gsmtc)) = get_gsmtc_media_internal().await {
+        if gsmtc.is_playing {
+            return Ok(Some(gsmtc));
+        }
+        
+        // If GSMTC is paused, check if Plex is playing
+        let (plex_url, plex_token) = {
+            let state = handle.state::<SharedSettings>();
+            let lock = state.lock().map_err(|e| e.to_string())?;
+            if !lock.plex_token.is_empty() {
+                // println!("DEBUG: Token is present ({} chars)", lock.plex_token.len());
+            } else {
+                eprintln!("DEBUG WARNING: Plex token is EMPTY in backend state!");
+            }
+            (lock.plex_url.clone(), lock.plex_token.clone())
+        };
+        
+        if let Some(plex) = fetch_plex_media(&plex_url, &plex_token).await {
+            if plex.is_playing {
+                return Ok(Some(plex));
+            }
+        }
+        
+        return Ok(Some(gsmtc));
+    }
+    
+    // 2. Fallback to Plex API
+    let (plex_url, plex_token) = {
+        let state = handle.state::<SharedSettings>();
+        let lock = state.lock().map_err(|e| e.to_string())?;
+        (lock.plex_url.clone(), lock.plex_token.clone())
+    };
+    Ok(fetch_plex_media(&plex_url, &plex_token).await)
+}
+
+#[tauri::command]
+async fn get_media_info_unified(handle: tauri::AppHandle) -> Result<Option<MediaInfo>, String> {
+    get_active_media_internal(handle).await
+}
+
+#[tauri::command]
+async fn media_control_unified(
+    handle: tauri::AppHandle, 
+    action: String, 
+    media: Option<MediaInfo>
+) -> Result<(), String> {
+    if let Some(m) = media {
+        if m.source == "plex" {
+            let session_id = m.session_id.clone().unwrap_or_default();
+            let machine_id = m.machine_id.clone().unwrap_or_default();
+            let address = m.address.clone().unwrap_or_default();
+            return plex_control(action, session_id, machine_id, address, handle.state()).await;
+        } else {
+            return gsmtc_action(action).await;
+        }
+    }
+    Ok(())
+}
+#[tauri::command]
+async fn gsmtc_action(action: String) -> Result<(), String> {
+    use windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager;
+    let manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync().map_err(|e: windows::core::Error| e.to_string())?.get().map_err(|e: windows::core::Error| e.to_string())?;
+    let session = manager.GetCurrentSession();
+    if let Ok(session) = session {
+        match action.as_str() {
+            "play_pause" => { let _ = session.TryTogglePlayPauseAsync().map_err(|e: windows::core::Error| e.to_string())?.get(); },
+            "next" => { let _ = session.TrySkipNextAsync().map_err(|e: windows::core::Error| e.to_string())?.get(); },
+            "previous" => { let _ = session.TrySkipPreviousAsync().map_err(|e: windows::core::Error| e.to_string())?.get(); },
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn register_hotkeys(app: AppHandle, settings: State<'_, SharedSettings>) -> Result<(), String> {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    let _ = app.global_shortcut().unregister_all();
+    
+    // Re-register launcher
+    use tauri_plugin_global_shortcut::{Shortcut, Modifiers, Code};
+    let launcher_shortcut = Shortcut::new(Some(Modifiers::ALT), Code::Space);
+    let _ = app.global_shortcut().register(launcher_shortcut);
+
+    let shortcuts = {
+        let lock = settings.lock().map_err(|e| e.to_string())?;
+        lock.terminal_shortcuts.clone()
+    };
+
+    for s in shortcuts {
+        if let Ok(shortcut) = s.shortcut.parse::<Shortcut>() {
+             let _ = app.global_shortcut().register(shortcut);
+        }
+    }
+    Ok(())
 }
 
 // ── Settings Window ─────────────────────────────────────────────────
@@ -380,8 +994,6 @@ fn toggle_terminal_panel(handle: tauri::AppHandle) {
 
 #[tauri::command]
 fn start_pty(rows: u16, cols: u16, args: Option<Vec<String>>, state: tauri::State<'_, TerminalState>, window: Window) -> Result<(), String> {
-    println!("INFO: start_pty called with {}x{}, args: {:?}", rows, cols, args);
-    
     // Kill existing master if any to allow restart
     {
         let mut m = state.master.lock().unwrap();
@@ -432,14 +1044,12 @@ fn start_pty(rows: u16, cols: u16, args: Option<Vec<String>>, state: tauri::Stat
 
     let _ = window.emit("pty-ready", "OK");
     let _ = window.app_handle().emit_to("terminal-panel", "pty-ready-global", "OK");
-    println!("INFO: PTY_READY emitted to terminal-panel");
 
     let app_handle_hb = window.app_handle().clone();
     thread::spawn(move || {
         for _ in 0..15 {
             thread::sleep(Duration::from_secs(1));
             let _ = app_handle_hb.emit_to("terminal-panel", "pty-heartbeat", "HB");
-            println!("DEBUG: Heartbeat emitted to terminal-panel");
         }
     });
 
@@ -449,11 +1059,10 @@ fn start_pty(rows: u16, cols: u16, args: Option<Vec<String>>, state: tauri::Stat
         let mut buffer = [0u8; 1024];
         loop {
             match reader.read(&mut buffer) {
-                Ok(0) => { println!("INFO: PTY reader reached EOF"); break; }
+                Ok(0) => { break; }
                 Ok(n) => {
                     let data = &buffer[..n];
                     let b64 = general_purpose::STANDARD.encode(data);
-                    println!("INFO: PTY read {} bytes", n);
                     let _ = app_handle.emit_to("terminal-panel", "pty-data", PtyPayload { data: b64 });
                 }
                 Err(e) => { println!("ERROR: PTY read error: {}", e); break; }
@@ -537,15 +1146,22 @@ fn cleanup_app_bar(hwnd_v: HWND) {
             Some(&mut reset_rect as *mut _ as *mut _),
             SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
         ).ok();
-
-        println!("DEBUG appbar: Cleanup complete (Reserved space released)");
     }
 }
 
 // ── Main ────────────────────────────────────────────────────────────
 
 fn main() {
+    let shared: SharedSettings = Arc::new(Mutex::new(AppSettings::default()));
+
+    let terminal_state = TerminalState {
+        writer: Arc::new(Mutex::new(None)),
+        master: Arc::new(Mutex::new(None)),
+    };
+
     tauri::Builder::default()
+        .manage(shared.clone())
+        .manage(terminal_state)
         .on_menu_event(|app, event| {
             let id = event.id().as_ref();
             let handle = app.app_handle();
@@ -571,20 +1187,18 @@ fn main() {
                 let _ = handle.emit_to("terminal-panel", "start-session", PtyPayload { data: serde_json::to_string(&final_args).unwrap_or_default() });
             }
         })
-        .setup(|app| {
+        .setup(move |app| {
             let app_handle = app.handle().clone();
             let app_handle_media = app.handle().clone();
 
+            // Load real settings
             let initial_settings = fetch_settings_helper(app.handle().clone());
-            let shared: SharedSettings = Arc::new(Mutex::new(initial_settings));
-            app.manage(shared.clone());
+            {
+                if let Ok(mut lock) = shared.lock() {
+                    *lock = initial_settings;
+                }
+            }
 
-            app.manage(TerminalState {
-                writer: Arc::new(Mutex::new(None)),
-                master: Arc::new(Mutex::new(None)),
-            });
-
-            let media_settings = shared.clone();
 
             if let Ok(Some(monitor)) = app.handle().primary_monitor() {
                 let size = monitor.size();
@@ -618,7 +1232,6 @@ fn main() {
                                     let _ = SetWindowPos(hwnd_v, HWND_TOPMOST, 0, 0, width as i32, 32, SWP_NOACTIVATE | SWP_FRAMECHANGED);
                                     
                                     if work_area.position.y != 32 {
-                                        println!("DEBUG workarea: Failure! y={}. Attempting SPI_SETWORKAREA...", work_area.position.y);
                                         let mut new_work_area = RECT {
                                             left: 0,
                                             top: 32,
@@ -678,21 +1291,82 @@ fn main() {
                 }
             });
 
-            thread::spawn(move || {
-                loop {
-                    let settings = match media_settings.lock() { 
-                        Ok(s) => s.clone(), 
-                        Err(_) => { 
-                            eprintln!("Plex ERROR: Failed to lock shared settings");
-                            thread::sleep(Duration::from_secs(5)); 
-                            continue; 
-                        } 
-                    };
-                    let current = fetch_plex_media(&settings);
-                    let _ = app_handle_media.emit("media-change", current);
-                    thread::sleep(Duration::from_secs(3));
+            // Background GSMTC listener
+            tauri::async_runtime::spawn(async move {
+                use windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager;
+                use windows::Foundation::TypedEventHandler;
+                
+                if let Ok(manager_op) = GlobalSystemMediaTransportControlsSessionManager::RequestAsync() {
+                    if let Ok(manager) = manager_op.get() {
+                        let h1 = app_handle_media.clone();
+                        let _ = manager.CurrentSessionChanged(&TypedEventHandler::new(move |_, _| {
+                            let h2 = h1.clone();
+                            tauri::async_runtime::spawn(async move {
+                                if let Ok(update) = get_active_media_internal(h2.clone()).await {
+                                    let _ = h2.emit("media-change", update);
+                                }
+                            });
+                            Ok(())
+                        }));
+
+                        let h3 = app_handle_media.clone();
+                        let _ = manager.SessionsChanged(&TypedEventHandler::new(move |_, _| {
+                            let h4 = h3.clone();
+                            tauri::async_runtime::spawn(async move {
+                                if let Ok(update) = get_active_media_internal(h4.clone()).await {
+                                    let _ = h4.emit("media-change", update);
+                                }
+                            });
+                            Ok(())
+                        }));
+                        
+                        // Periodic fallback/refresh
+                        let h_poll = app_handle_media.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let mut interval = interval(Duration::from_secs(5));
+                            loop {
+                                interval.tick().await;
+                                // println!("DEBUG: Polling loop tick");
+                                if let Ok(update) = get_active_media_internal(h_poll.clone()).await {
+                                    h_poll.emit("media-change", update).ok();
+                                }
+                            }
+                        });
+                    }
                 }
             });
+            
+            // Global Shortcut: Alt+Space
+            use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, Modifiers, Code};
+            let launcher_shortcut = Shortcut::new(Some(Modifiers::ALT), Code::Space);
+            app.handle().plugin(
+                tauri_plugin_global_shortcut::Builder::new()
+                    .with_handler(move |app, shortcut, event| {
+                        if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                            if shortcut == &launcher_shortcut {
+                                toggle_launcher(app.clone());
+                            } else {
+                                if let Ok(settings) = app.state::<SharedSettings>().lock() {
+                                    for s in &settings.terminal_shortcuts {
+                                        if let Ok(registered) = s.shortcut.parse::<tauri_plugin_global_shortcut::Shortcut>() {
+                                            if &registered == shortcut {
+                                                // Execute command
+                                                let app_c = app.clone();
+                                                let cmd = s.cmd.clone();
+                                                std::thread::spawn(move || {
+                                                    let _ = app_c.shell().command("cmd").args(["/C", &cmd]).spawn();
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    })
+                    .build(),
+            ).ok();
+            app.global_shortcut().register(launcher_shortcut).ok();
+
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -720,7 +1394,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_volume, 
             set_volume, 
-            get_media_info, 
+            get_media_info_unified, 
+            media_control_unified,
             get_settings, 
             save_settings, 
             open_settings, 
@@ -731,7 +1406,21 @@ fn main() {
             start_pty,
             write_pty,
             resize_pty,
-            show_terminal_context_menu
+            show_terminal_context_menu,
+            search_query,
+            launch_result,
+            toggle_launcher,
+            get_battery_status,
+            system_power_action,
+            get_mic_status,
+            toggle_mic_mute,
+            get_weather,
+            search_locations,
+            get_bluetooth_status,
+            get_obs_status,
+            gsmtc_action,
+            register_hotkeys,
+            set_window_height
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -4,7 +4,7 @@
   "identifier": "com.aeropeks.app",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://localhost:1421",
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build"
   },
@@ -29,11 +29,11 @@
         "label": "settings",
         "title": "Aeropeks Settings",
         "url": "/?window=settings",
-        "width": 400,
-        "height": 500,
+        "width": 640,
+        "height": 720,
         "decorations": true,
-        "transparent": false,
-        "resizable": false,
+        "transparent": true,
+        "resizable": true,
         "visible": false,
         "center": true
       },
@@ -62,6 +62,20 @@
         "visible": false,
         "skipTaskbar": true,
         "shadow": false
+      },
+      {
+        "label": "launcher-panel",
+        "title": "Aeropeks Launcher",
+        "url": "/?window=launcher-panel",
+        "width": 600,
+        "height": 400,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "shadow": false,
+        "center": true
       }
     ],
     "security": {

@@ -5,6 +5,7 @@ import App from "./App";
 import Settings from "./Settings";
 import ExpandedPlayer from "./ExpandedPlayer";
 import Terminal from "./Terminal";
+import Launcher from "./Launcher";
 import "./index.css";
 
 function Root() {
@@ -30,6 +31,10 @@ function Root() {
 
   if (windowType === "terminal-panel") {
     return <Terminal />;
+  }
+  
+  if (windowType === "launcher-panel") {
+    return <Launcher />;
   }
 
   // Only render App for the 'main' window explicitly
