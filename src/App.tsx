@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { Music, Volume2, Clock, Play, Pause, SkipBack, SkipForward, Terminal as TerminalIcon, Bluetooth, Battery, Mic, MicOff, Video, Cloud, Power, Settings as SettingsIcon } from "lucide-react";
+import { Music, Volume2, Clock, Play, Pause, SkipBack, SkipForward, Terminal as TerminalIcon, Bluetooth, Battery, Mic, MicOff, Video, Cloud, Power, Settings as SettingsIcon, Shield } from "lucide-react";
 import { WeatherPopover } from "./WeatherPopover";
 
 interface TerminalShortcut {
@@ -33,6 +33,11 @@ interface MediaInfo {
   session_id?: string;
   machine_id?: string;
   address?: string;
+}
+
+interface BluetoothStatus {
+  connected: boolean;
+  devices: string[];
 }
 
 interface BatteryStatus {
@@ -75,8 +80,11 @@ function App() {
   const [volume, setVolume] = useState(0.5);
   const [showVolume, setShowVolume] = useState(false);
   const [battery, setBattery] = useState<BatteryStatus | null>(null);
-  const [bluetooth, setBluetooth] = useState(false);
+  const [bluetooth, setBluetooth] = useState<BluetoothStatus>({ connected: false, devices: [] });
+  const [showBluetoothMenu, setShowBluetoothMenu] = useState(false);
+  const bluetoothRef = useRef<HTMLDivElement>(null);
   const [micMuted, setMicMuted] = useState(false);
+  const [privacyMode, setPrivacyMode] = useState(false);
   const [obsStatus, setObsStatus] = useState<ObsStatus | null>(null);
   const [weather, setWeather] = useState<WeatherDetailed | null>(null);
   const [showWeather, setShowWeather] = useState(false);
@@ -123,8 +131,9 @@ function App() {
   const fetchStatuses = async () => {
     try {
       setBattery(await invoke<BatteryStatus>("get_battery_status"));
-      setBluetooth(await invoke<boolean>("get_bluetooth_status"));
+      setBluetooth(await invoke<BluetoothStatus>("get_bluetooth_status"));
       setMicMuted(await invoke<boolean>("get_mic_status"));
+      setPrivacyMode(await invoke<boolean>("get_privacy_status"));
       setObsStatus(await invoke<ObsStatus>("get_obs_status"));
     } catch (e) {}
   };
@@ -217,9 +226,12 @@ function App() {
       if (terminalMenuRef.current && !terminalMenuRef.current.contains(event.target as Node)) {
         setShowTerminalMenu(false);
       }
+      if (bluetoothRef.current && !bluetoothRef.current.contains(event.target as Node)) {
+        setShowBluetoothMenu(false);
+      }
     };
 
-    if (showVolume || showPowerMenu || showWeather || showTerminalMenu) {
+    if (showVolume || showPowerMenu || showWeather || showTerminalMenu || showBluetoothMenu) {
       document.addEventListener("mousedown", handleClickOutside);
     } else {
       document.removeEventListener("mousedown", handleClickOutside);
@@ -232,12 +244,12 @@ function App() {
 
   useEffect(() => {
     // Dynamic window expansion for dropdowns/popovers
-    if (showVolume || showPowerMenu || showWeather || showTerminalMenu) {
-       invoke("set_window_height", { height: 600 }).catch(console.error);
+    if (showVolume || showPowerMenu || showWeather || showTerminalMenu || showBluetoothMenu) {
+       invoke("set_window_height", { height: 700 }).catch(console.error);
     } else {
        invoke("set_window_height", { height: 32 }).catch(console.error);
     }
-  }, [showVolume, showPowerMenu, showWeather, showTerminalMenu]);
+  }, [showVolume, showPowerMenu, showWeather, showTerminalMenu, showBluetoothMenu]);
 
   const handleVolumeChange = (newVol: number) => {
     setVolume(newVol);
@@ -249,9 +261,22 @@ function App() {
     try {
       const isMuted = await invoke<boolean>("toggle_mic_mute");
       setMicMuted(isMuted);
-    } catch (e) {}
+    } catch (e) {
+      console.error("Mic toggle failed", e);
+    }
   };
 
+  const handlePrivacyToggle = async () => {
+    try {
+      const nextState = !privacyMode;
+      await invoke("set_privacy_mode", { enabled: nextState });
+      setPrivacyMode(nextState);
+      // Privacy mode also affects mic state in our backend
+      setMicMuted(nextState ? true : await invoke<boolean>("get_mic_status"));
+    } catch (e) {
+      console.error("Privacy mode toggle failed", e);
+    }
+  };
   return (
     <div className="main-window">
       <div className="menu-bar" onContextMenu={(e) => e.preventDefault()}>
@@ -319,8 +344,41 @@ function App() {
             </div>
           )}
 
-          <div className={`status-item ${bluetooth ? 'active' : 'inactive'}`} title="Bluetooth">
+          <div 
+            className={`status-item ${privacyMode ? 'privacy-active' : ''}`} 
+            onClick={handlePrivacyToggle}
+            title={privacyMode ? "Privacy Mode: ON (Mic/Cam blocked)" : "Privacy Mode: OFF"}
+          >
+            {privacyMode ? <Shield size={16} color="#ef4444" /> : <Shield size={16} />}
+          </div>
+
+          <div 
+            className={`status-item ${bluetooth.connected ? 'bluetooth-active' : ''}`} 
+            title="Bluetooth"
+            ref={bluetoothRef}
+            onClick={() => {
+                setShowBluetoothMenu(!showBluetoothMenu);
+                setShowVolume(false);
+                setShowPowerMenu(false);
+                setShowTerminalMenu(false);
+            }}
+          >
             <Bluetooth size={16} />
+            {showBluetoothMenu && (
+              <div className="bluetooth-popover dropdown" onClick={(e) => e.stopPropagation()}>
+                <div className="ctx-header">Connected Devices</div>
+                {bluetooth.devices.length > 0 ? (
+                  bluetooth.devices.map((device, idx) => (
+                    <div key={idx} className="device-item">
+                      <Bluetooth size={12} style={{ marginRight: '8px', color: 'var(--accent)' }} />
+                      {device}
+                    </div>
+                  ))
+                ) : (
+                  <div className="setting-hint" style={{ padding: '8px 12px' }}>No devices connected</div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="status-item" onClick={handleMicToggle} title={micMuted ? "Unmute Mic" : "Mute Mic"}>
@@ -334,6 +392,7 @@ function App() {
               setShowVolume(!showVolume);
               setShowPowerMenu(false);
               setShowTerminalMenu(false);
+              setShowBluetoothMenu(false);
             }}
             title="Volume"
           >
@@ -416,6 +475,7 @@ function App() {
               setShowPowerMenu(!showPowerMenu);
               setShowVolume(false);
               setShowTerminalMenu(false);
+              setShowBluetoothMenu(false);
             }}
           >
             <Power size={16} />

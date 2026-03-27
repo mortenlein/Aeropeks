@@ -234,8 +234,50 @@ body {
   color: var(--text-main);
 }
 
-.status-item.volume-item {
-  position: relative;
+.status-item.privacy-active {
+  color: #ef4444; 
+}
+
+.status-item.privacy-active svg {
+  filter: drop-shadow(0 0 4px rgba(239, 68, 68, 0.4));
+}
+
+.status-item.bluetooth-active {
+  color: #4ade80;
+}
+
+.status-item.bluetooth-active svg {
+  filter: drop-shadow(0 0 4px rgba(74, 222, 128, 0.4));
+}
+
+.bluetooth-popover {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 8px;
+  min-width: 180px;
+  background: var(--bg-primary);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  padding: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+}
+
+.device-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--text-main);
+  border-radius: 8px;
+  transition: background 0.2s;
+}
+
+.device-item:hover {
+  background: var(--bg-hover);
 }
 
 .volume-popover {
@@ -824,6 +866,19 @@ button.primary:hover {
   animation: popIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   z-index: 2000;
   pointer-events: auto;
+  max-height: 640px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+}
+
+.weather-popover-container::-webkit-scrollbar {
+  width: 6px;
+}
+
+.weather-popover-container::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
 }
 
 @keyframes popIn {

@@ -571,6 +571,33 @@ fn toggle_mic_mute() -> Result<bool, String> {
     }
 }
 
+#[tauri::command]
+fn get_privacy_status() -> Result<bool, String> {
+    let mic_muted = get_mic_status()?;
+    Ok(mic_muted) // For now, we use mic as primary indicator for Privacy Mode
+}
+
+#[tauri::command]
+async fn set_privacy_mode(enabled: bool) -> Result<(), String> {
+    // 1. Mic
+    let current_mute = get_mic_status()?;
+    if (enabled && !current_mute) || (!enabled && current_mute) {
+        let _ = toggle_mic_mute();
+    }
+    
+    // 2. Camera (PowerShell)
+    let cmd = if enabled { "Disable-PnpDevice" } else { "Enable-PnpDevice" };
+    let _ = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            &format!("Get-PnpDevice -Class Camera -ErrorAction SilentlyContinue | {} -Confirm:$false", cmd)
+        ])
+        .status();
+    
+    Ok(())
+}
+
 
 // ── Bluetooth & Weather ─────────────────────────────────────────────
 
@@ -724,21 +751,40 @@ async fn search_locations(query: String) -> Result<Vec<LocationSearchResult>, St
     Ok(results)
 }
 
+#[derive(Debug, serde::Serialize, Clone, Default)]
+struct BluetoothStatus {
+    connected: bool,
+    devices: Vec<String>,
+}
+
 #[tauri::command]
-fn get_bluetooth_status() -> bool {
-    unsafe {
-        use windows::Win32::Devices::Bluetooth::{BluetoothFindFirstRadio, BLUETOOTH_FIND_RADIO_PARAMS};
-        let params = BLUETOOTH_FIND_RADIO_PARAMS { dwSize: std::mem::size_of::<BLUETOOTH_FIND_RADIO_PARAMS>() as u32 };
-        let mut radio = windows::Win32::Foundation::HANDLE::default();
-        match BluetoothFindFirstRadio(&params, &mut radio) {
-            Ok(handle) => {
-                let _ = windows::Win32::Foundation::CloseHandle(radio);
-                let _ = windows::Win32::Devices::Bluetooth::BluetoothFindRadioClose(handle);
-                true
-            },
-            Err(_) => false,
-        }
+fn get_bluetooth_status() -> BluetoothStatus {
+    let mut status = BluetoothStatus::default();
+    
+    // Improved PowerShell command:
+    // - Targets BTHENUM which are typically paired/connected devices.
+    // - Excludes system-facing names like 'Transport', 'Service', 'Enumerator', 'Gateway', etc.
+    let output = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            "Get-PnpDevice -Class Bluetooth | Where-Object { $_.Status -eq 'OK' -and $_.Present -eq $true -and $_.InstanceId -like 'BTHENUM*' -and $_.FriendlyName -notmatch 'Service|Transport|Enumerator|Gateway|Radio|Adapter|Controller|Generic' } | Select-Object -ExpandProperty FriendlyName"
+        ])
+        .output();
+
+    if let Ok(out) = output {
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let devices: Vec<String> = stdout
+            .lines()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        
+        status.connected = !devices.is_empty();
+        status.devices = devices;
     }
+    
+    status
 }
 
 #[derive(Serialize)]
@@ -1429,6 +1475,8 @@ fn main() {
             system_power_action,
             get_mic_status,
             toggle_mic_mute,
+            get_privacy_status,
+            set_privacy_mode,
             get_weather,
             search_locations,
             get_bluetooth_status,

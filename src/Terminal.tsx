@@ -5,7 +5,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "@xterm/xterm/css/xterm.css";
 import { X } from "lucide-react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 
 function Terminal() {
   const terminalRef = useRef<HTMLDivElement>(null);
@@ -136,7 +135,7 @@ function Terminal() {
             <span className="terminal-accent-dot" />
             Terminal
           </div>
-          <button className="close-btn" onClick={() => getCurrentWindow().hide()}>
+          <button className="close-btn" onClick={() => invoke("toggle_terminal_panel")}>
             <X size={14} />
           </button>
         </div>
