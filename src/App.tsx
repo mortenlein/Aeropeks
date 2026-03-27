@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { Music, Volume2, Clock, Play, Pause, SkipBack, SkipForward, Terminal as TerminalIcon, Bluetooth, Battery, Mic, MicOff, Video, Cloud, Power, Settings as SettingsIcon, Sun, CloudRain, CloudLightning, Snowflake, Wind, CloudSun, CloudDrizzle } from "lucide-react";
+import { Music, Volume2, Clock, Play, Pause, SkipBack, SkipForward, Terminal as TerminalIcon, Bluetooth, Battery, Mic, MicOff, Video, Cloud, Power, Settings as SettingsIcon } from "lucide-react";
 import { WeatherPopover } from "./WeatherPopover";
 
 interface TerminalShortcut {
@@ -84,6 +84,12 @@ function App() {
   
   const [showPowerMenu, setShowPowerMenu] = useState(false);
   const powerMenuRef = useRef<HTMLDivElement>(null);
+  
+  const [showTerminalMenu, setShowTerminalMenu] = useState(false);
+  const [terminalMenuPos, setTerminalMenuPos] = useState({ x: 0, y: 0 });
+  const terminalMenuRef = useRef<HTMLDivElement>(null);
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+
   const [time, setTime] = useState("");
   const [use24h, setUse24h] = useState(true);
 
@@ -123,10 +129,11 @@ function App() {
     } catch (e) {}
   };
 
-  const fetchWeather = async () => {
+  const fetchWeather = async (settings?: AppSettings) => {
     try {
-      const s = await invoke<AppSettings>("get_settings");
+      const s = settings || await invoke<AppSettings>("get_settings");
       if (s.weather_lat && s.weather_lon) {
+        console.log("Refreshing weather for:", s.weather_location);
         const w = await invoke<WeatherDetailed>("get_weather", { 
           lat: s.weather_lat, 
           lon: s.weather_lon,
@@ -141,6 +148,7 @@ function App() {
 
   useEffect(() => {
     invoke<AppSettings>("get_settings").then((s) => {
+      setSettings(s);
       if (s.accent_color) {
         document.documentElement.style.setProperty("--accent", s.accent_color);
       }
@@ -172,10 +180,15 @@ function App() {
     });
 
     const unlistenSettings = listen<AppSettings>("settings-changed", (event) => {
-      setUse24h(event.payload.use_24h !== false);
-      if (event.payload.accent_color) {
-        document.documentElement.style.setProperty("--accent", event.payload.accent_color);
+      const s = event.payload;
+      setSettings(s);
+      setUse24h(s.use_24h !== false);
+      if (s.accent_color) {
+        document.documentElement.style.setProperty("--accent", s.accent_color);
       }
+      // Force weather and media refresh on settings change
+      fetchWeather(s);
+      fetchMedia();
     });
 
     return () => {
@@ -201,9 +214,12 @@ function App() {
       if (weatherRef.current && !weatherRef.current.contains(event.target as Node)) {
         setShowWeather(false);
       }
+      if (terminalMenuRef.current && !terminalMenuRef.current.contains(event.target as Node)) {
+        setShowTerminalMenu(false);
+      }
     };
 
-    if (showVolume || showPowerMenu || showWeather) {
+    if (showVolume || showPowerMenu || showWeather || showTerminalMenu) {
       document.addEventListener("mousedown", handleClickOutside);
     } else {
       document.removeEventListener("mousedown", handleClickOutside);
@@ -216,12 +232,12 @@ function App() {
 
   useEffect(() => {
     // Dynamic window expansion for dropdowns/popovers
-    if (showVolume || showPowerMenu || showWeather) {
+    if (showVolume || showPowerMenu || showWeather || showTerminalMenu) {
        invoke("set_window_height", { height: 600 }).catch(console.error);
     } else {
        invoke("set_window_height", { height: 32 }).catch(console.error);
     }
-  }, [showVolume, showPowerMenu, showWeather]);
+  }, [showVolume, showPowerMenu, showWeather, showTerminalMenu]);
 
   const handleVolumeChange = (newVol: number) => {
     setVolume(newVol);
@@ -284,7 +300,10 @@ function App() {
               <span>{Math.round(weather.temp)}°C</span>
               
               {showWeather && (
-                <div onClick={(e) => e.stopPropagation()}>
+                <div 
+                  style={{ position: 'absolute' }} 
+                  onClick={(e) => e.stopPropagation()}
+                >
                   <WeatherPopover 
                     data={weather} 
                     onClose={() => setShowWeather(false)} 
@@ -314,6 +333,7 @@ function App() {
             onClick={() => {
               setShowVolume(!showVolume);
               setShowPowerMenu(false);
+              setShowTerminalMenu(false);
             }}
             title="Volume"
           >
@@ -341,8 +361,52 @@ function App() {
             </div>
           )}
 
-          <div className="status-item" onClick={() => invoke("toggle_terminal_panel")} onContextMenu={(e) => { e.preventDefault(); invoke("show_terminal_context_menu"); }}>
+          <div 
+            className="status-item" 
+            onClick={() => {
+                invoke("toggle_terminal_panel");
+                setShowTerminalMenu(false);
+            }} 
+            onContextMenu={(e) => { 
+                e.preventDefault(); 
+                setTerminalMenuPos({ x: e.clientX, y: e.clientY });
+                setShowTerminalMenu(true);
+            }}
+            ref={terminalMenuRef}
+          >
             <TerminalIcon size={16} />
+            {showTerminalMenu && (
+                <div 
+                    className="ctx-menu" 
+                    style={{ 
+                        position: 'fixed', 
+                        top: '40px', 
+                        right: 'auto',
+                        left: `${terminalMenuPos.x - 100}px` 
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                >
+                    <div className="ctx-header">SSH Shortcuts</div>
+                    {settings?.terminal_shortcuts.map((s, idx) => (
+                        <button 
+                            key={idx} 
+                            onClick={async () => {
+                                setShowTerminalMenu(false);
+                                // Logic to start session (copied from backend command implementation)
+                                const args = s.cmd.split(/\s+/);
+                                await invoke("toggle_terminal_panel"); // Ensure open
+                                await invoke("start_pty", { rows: 24, cols: 80, args }); // Start session
+                            }}
+                        >
+                            <span>{s.label}</span>
+                            <span className="ctx-hint">{s.cmd}</span>
+                        </button>
+                    ))}
+                    {(!settings?.terminal_shortcuts || settings.terminal_shortcuts.length === 0) && (
+                        <div style={{ padding: '8px 12px', fontSize: '12px', opacity: 0.5 }}>No shortcuts configured</div>
+                    )}
+                 </div>
+            )}
           </div>
 
           <div 
@@ -351,6 +415,7 @@ function App() {
             onClick={() => {
               setShowPowerMenu(!showPowerMenu);
               setShowVolume(false);
+              setShowTerminalMenu(false);
             }}
           >
             <Power size={16} />

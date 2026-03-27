@@ -114,18 +114,32 @@ fn get_settings_path(handle: tauri::AppHandle) -> PathBuf {
 fn fetch_settings_helper(handle: tauri::AppHandle) -> AppSettings {
     let path = get_settings_path(handle);
     println!("DEBUG: Checking settings file at {:?}. Exists: {}", path, path.exists());
+    if !path.exists() {
+        return AppSettings::default();
+    }
+
     match fs::read_to_string(&path) {
         Ok(content) => {
             match serde_json::from_str::<AppSettings>(&content) {
                 Ok(settings) => return settings,
                 Err(e) => {
-                    eprintln!("DEBUG ERROR: Failed to parse settings at {:?}: {}. Falling back to default.", path, e);
-                    // Try to migrate or just return default
+                    eprintln!("DEBUG ERROR: Critical parse failure for settings at {:?}: {}.", path, e);
+                    // Create a backup of the corrupted file before falling back
+                    let mut backup_path = path.clone();
+                    backup_path.set_extension("json.error");
+                    if let Err(be) = fs::rename(&path, &backup_path) {
+                        eprintln!("DEBUG ERROR: Failed to backup corrupted settings: {}", be);
+                    } else {
+                        eprintln!("DEBUG: Corrupted settings backed up to {:?}", backup_path);
+                    }
                     return AppSettings::default();
                 }
             }
         },
-        Err(_) => AppSettings::default(),
+        Err(e) => {
+            eprintln!("DEBUG ERROR: Failed to read settings file: {}", e);
+            AppSettings::default()
+        },
     }
 }
 
@@ -1229,7 +1243,8 @@ fn main() {
                                     SHAppBarMessage(ABM_QUERYPOS, &mut abd);
                                     abd.rc.top = 0; abd.rc.bottom = 32;
                                     SHAppBarMessage(ABM_SETPOS, &mut abd);
-                                    let _ = SetWindowPos(hwnd_v, HWND_TOPMOST, 0, 0, width as i32, 32, SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                                    let current_height = w_clone.inner_size().unwrap_or(tauri::PhysicalSize { width: 0, height: 32 }).height;
+                                    let _ = SetWindowPos(hwnd_v, HWND_TOPMOST, 0, 0, width as i32, current_height as i32, SWP_NOACTIVATE | SWP_FRAMECHANGED);
                                     
                                     if work_area.position.y != 32 {
                                         let mut new_work_area = RECT {
