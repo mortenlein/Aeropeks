@@ -23,8 +23,10 @@
         "visible": true,
         "x": 0,
         "y": 0,
-        "center": false
+        "center": false,
+        "skipTaskbar": true
       },
+
       {
         "label": "settings",
         "title": "Aeropeks Settings",
@@ -35,8 +37,10 @@
         "transparent": true,
         "resizable": true,
         "visible": false,
-        "center": true
+        "center": true,
+        "skipTaskbar": true
       },
+
       {
         "label": "expanded-player",
         "title": "Aeropeks Player",
@@ -48,8 +52,10 @@
         "alwaysOnTop": true,
         "resizable": false,
         "visible": false,
-        "shadow": false
+        "shadow": false,
+        "skipTaskbar": true
       },
+
       {
         "label": "terminal-panel",
         "title": "Terminal",

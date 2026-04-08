@@ -1,4 +1,6 @@
 // Aeropeks v0.1.0 - Terminal Fix Build
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
 use std::fs;
@@ -25,7 +27,11 @@ use std::io::{Write, Read};
 use base64::{Engine as _, engine::general_purpose};
 use serde_json;
 use walkdir::WalkDir;
-use tauri_plugin_shell::ShellExt;
+#[cfg(windows)]
+
+use std::os::windows::process::CommandExt;
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 
 #[derive(Serialize, Clone)]
 struct PtyPayload {
@@ -476,16 +482,24 @@ fn launch_result(handle: AppHandle, result: SearchResult) -> Result<(), String> 
             let _ = open::that(result.action_value);
         }
         "app" | "system" => {
-            let shell = handle.shell();
             if result.action_value.contains(" ") && result.action_type == "system" {
                 let parts: Vec<&str> = result.action_value.split_whitespace().collect();
                 let cmd = parts[0];
                 let args = &parts[1..];
-                shell.command(cmd).args(args).spawn().map_err(|e| e.to_string())?;
+                std::process::Command::new(cmd)
+                    .args(args)
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .spawn()
+                    .map_err(|e| e.to_string())?;
             } else {
-                shell.command("cmd").args(["/C", "start", "", &result.action_value]).spawn().map_err(|e| e.to_string())?;
+                std::process::Command::new("cmd")
+                    .args(["/C", "start", "", &result.action_value])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .spawn()
+                    .map_err(|e| e.to_string())?;
             }
         }
+
         _ => return Err("Unknown action type".to_string()),
     }
 
@@ -535,10 +549,11 @@ fn get_battery_status() -> BatteryStatus {
 #[tauri::command]
 fn system_power_action(action: String) {
     match action.as_str() {
-        "shutdown" => { let _ = std::process::Command::new("shutdown").args(["/s", "/t", "0"]).spawn(); },
-        "restart" => { let _ = std::process::Command::new("shutdown").args(["/r", "/t", "0"]).spawn(); },
+        "shutdown" => { let _ = std::process::Command::new("shutdown").args(["/s", "/t", "0"]).creation_flags(CREATE_NO_WINDOW).spawn(); },
+        "restart" => { let _ = std::process::Command::new("shutdown").args(["/r", "/t", "0"]).creation_flags(CREATE_NO_WINDOW).spawn(); },
         "sleep" => { unsafe { let _ = windows::Win32::System::Power::SetSuspendState(false, false, false); } },
         "lock" => { unsafe { let _ = windows::Win32::System::Shutdown::LockWorkStation(); } },
+
         _ => {},
     }
 }
@@ -588,12 +603,14 @@ async fn set_privacy_mode(enabled: bool) -> Result<(), String> {
     // 2. Camera (PowerShell)
     let cmd = if enabled { "Disable-PnpDevice" } else { "Enable-PnpDevice" };
     let _ = std::process::Command::new("powershell")
+        .creation_flags(CREATE_NO_WINDOW)
         .args([
             "-NoProfile",
             "-Command",
             &format!("Get-PnpDevice -Class Camera -ErrorAction SilentlyContinue | {} -Confirm:$false", cmd)
         ])
         .status();
+
     
     Ok(())
 }
@@ -765,12 +782,14 @@ fn get_bluetooth_status() -> BluetoothStatus {
     // - Targets BTHENUM which are typically paired/connected devices.
     // - Excludes system-facing names like 'Transport', 'Service', 'Enumerator', 'Gateway', etc.
     let output = std::process::Command::new("powershell")
+        .creation_flags(CREATE_NO_WINDOW)
         .args([
             "-NoProfile",
             "-Command",
             "Get-PnpDevice -Class Bluetooth | Where-Object { $_.Status -eq 'OK' -and $_.Present -eq $true -and $_.InstanceId -like 'BTHENUM*' -and $_.FriendlyName -notmatch 'Service|Transport|Enumerator|Gateway|Radio|Adapter|Controller|Generic' } | Select-Object -ExpandProperty FriendlyName"
         ])
         .output();
+
 
     if let Ok(out) = output {
         let stdout = String::from_utf8_lossy(&out.stdout);
@@ -1415,8 +1434,13 @@ fn main() {
                                                 let app_c = app.clone();
                                                 let cmd = s.cmd.clone();
                                                 std::thread::spawn(move || {
-                                                    let _ = app_c.shell().command("cmd").args(["/C", &cmd]).spawn();
+                                                    let _ = std::process::Command::new("cmd")
+                                                        .args(["/C", &cmd])
+                                                        .creation_flags(CREATE_NO_WINDOW)
+                                                        .spawn();
                                                 });
+
+
                                             }
                                         }
                                     }
