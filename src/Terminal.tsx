@@ -12,6 +12,46 @@ function Terminal() {
   const unlistenRefs = useRef<(() => void)[]>([]);
   const ptyListenersRef = useRef<(() => void)[]>([]);
 
+  const setupPty = async (args: string[] | null = null) => {
+    const term = xtermRef.current;
+    if (!term) return;
+
+    try {
+      // 1. Clear previous PTY-specific listeners
+      ptyListenersRef.current.forEach(u => u());
+      ptyListenersRef.current = [];
+
+      // 2. Set up new PTY data listener
+      const unPty = await listen<{ data: string }>("pty-data", (event) => {
+        try {
+          const binaryString = window.atob(event.payload.data);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          term.write(bytes);
+        } catch (e) {
+          console.error("PTY Decode Error:", e);
+        }
+      });
+      ptyListenersRef.current.push(unPty);
+
+      // 3. Optional: other PTY events
+      const unReady = await listen("pty-ready-global", () => { });
+      ptyListenersRef.current.push(unReady);
+
+      const unExit = await listen<string>("pty-exit", (event) => {
+        term.write(`\r\n\x1b[33m[Process Terminated: ${event.payload}]\x1b[0m\r\n`);
+      });
+      ptyListenersRef.current.push(unExit);
+
+      // 4. Start the backend PTY
+      await invoke("start_pty", { rows: term.rows, cols: term.cols, args });
+    } catch (e) {
+      term.write(`\r\n\x1b[31mSetup Error: ${e}\x1b[0m\r\n`);
+    }
+  };
+
   useEffect(() => {
     if (!terminalRef.current) return;
 
@@ -43,63 +83,28 @@ function Terminal() {
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
 
-    // Wait for fonts to be ready before opening the terminal to prevent glyph caching issues
     document.fonts.ready.then(() => {
       if (!terminalRef.current) return;
       term.open(terminalRef.current);
       fitAddon.fit();
-      // Force a refresh after a small delay to ensure canvas glyphs are updated
       setTimeout(() => term.refresh(0, term.rows - 1), 200);
     });
 
     xtermRef.current = term;
 
-    const handlePtyData = (b64: string) => {
-      try {
-        const binaryString = window.atob(b64);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-        term.write(bytes);
-      } catch (e) {
-        console.error("PTY Decode Error:", e);
-      }
-    };
-
-
-    const setupPty = async (args: string[] | null = null) => {
-      try {
-        // 1. Clear previous PTY-specific listeners
-        ptyListenersRef.current.forEach(u => u());
-        ptyListenersRef.current = [];
-
-        // 2. Set up new PTY data listener
-        const unPty = await listen<{data: string}>("pty-data", (event) => {
-          handlePtyData(event.payload.data);
-        });
-        ptyListenersRef.current.push(unPty);
-
-        // 3. Optional: other PTY events
-        const unReady = await listen("pty-ready-global", () => {});
-        ptyListenersRef.current.push(unReady);
-
-        // 4. Start the backend PTY
-        await invoke("start_pty", { rows: term.rows, cols: term.cols, args });
-      } catch (e) {
-        term.write(`\r\n\x1b[31mSetup Error: ${e}\x1b[0m\r\n`);
-      }
-    };
-
     // Initial shell
     setupPty();
 
-    // Persistent Session Listener (never cleared by setupPty)
-    listen<{data: string}>("start-session", (event) => {
+    // Persistent Session Listener
+    listen<{ data: string }>("start-session", (event) => {
       try {
         const args = JSON.parse(event.payload.data);
         term.reset();
-        term.write(`\x1b[32mStarting session: ${args.join(" ")}\x1b[0m\r\n`);
+        if (args.length > 0) {
+          term.write(`\x1b[32mStarting session: ${args.join(" ")}\x1b[0m\r\n`);
+        } else {
+          term.write(`\x1b[32mStarting fresh local shell...\x1b[0m\r\n`);
+        }
         setupPty(args);
       } catch (e) {
         console.error("Failed to parse session args:", e);
@@ -107,11 +112,11 @@ function Terminal() {
     }).then(u => unlistenRefs.current.push(u));
 
     term.onData((data) => {
-      invoke("write_pty", { data }).catch(() => {});
+      invoke("write_pty", { data }).catch(() => { });
     });
 
     term.onResize(({ cols, rows }) => {
-      invoke("resize_pty", { rows, cols }).catch(() => {});
+      invoke("resize_pty", { rows, cols }).catch(() => { });
     });
 
     const handleResize = () => {
@@ -127,6 +132,13 @@ function Terminal() {
     };
   }, []);
 
+  const handleReset = () => {
+    if (xtermRef.current) {
+      xtermRef.current.reset();
+      setupPty();
+    }
+  };
+
   return (
     <div className="terminal-outer">
       <div className="terminal-panel">
@@ -135,9 +147,13 @@ function Terminal() {
             <span className="terminal-accent-dot" />
             Terminal
           </div>
-          <button className="close-btn" onClick={() => invoke("toggle_terminal_panel")}>
-            <X size={14} />
-          </button>
+          <div className="terminal-header-actions">
+            <button className="header-action-btn" onClick={handleReset}>Reset</button>
+            <button className="header-action-btn danger" onClick={() => invoke("kill_pty")}>Kill</button>
+            <button className="close-btn" onClick={() => invoke("toggle_terminal_panel")}>
+              <X size={14} />
+            </button>
+          </div>
         </div>
         <div ref={terminalRef} className="terminal-container" />
       </div>

@@ -53,10 +53,9 @@ struct TerminalShortcut {
 
 fn default_shortcuts() -> Vec<TerminalShortcut> {
     vec![
-        TerminalShortcut { id: "ssh-home".to_string(), label: "SSH: Home Lab (pi@homeserver)".to_string(), cmd: "ssh pi@homeserver.local".to_string(), shortcut: "".to_string() },
-        TerminalShortcut { id: "ssh-prod".to_string(), label: "SSH: Production (root@vps)".to_string(), cmd: "ssh root@production-vps".to_string(), shortcut: "".to_string() },
+        TerminalShortcut { id: "local-bash".to_string(), label: "Local Terminal".to_string(), cmd: "".to_string(), shortcut: "Alt+T".to_string() },
+        TerminalShortcut { id: "ssh-home".to_string(), label: "SSH: Home Lab".to_string(), cmd: "ssh pi@homeserver.local".to_string(), shortcut: "".to_string() },
         TerminalShortcut { id: "git-status".to_string(), label: "Git Status".to_string(), cmd: "git status".to_string(), shortcut: "".to_string() },
-        TerminalShortcut { id: "git-fetch".to_string(), label: "Git Fetch All".to_string(), cmd: "git fetch --all".to_string(), shortcut: "".to_string() },
     ]
 }
 
@@ -1092,7 +1091,7 @@ fn start_pty(rows: u16, cols: u16, args: Option<Vec<String>>, state: tauri::Stat
     let shell_path = "C:\\Program Files\\Git\\bin\\bash.exe";
     let mut cmd = CommandBuilder::new(shell_path);
     
-    if let Some(cmd_args) = args {
+    if let Some(cmd_args) = args.filter(|a| !a.is_empty()) {
         // Use --login to ensure profile is loaded, and -c to run the command
         cmd.arg("--login");
         cmd.arg("-c");
@@ -1138,17 +1137,33 @@ fn start_pty(rows: u16, cols: u16, args: Option<Vec<String>>, state: tauri::Stat
         let mut buffer = [0u8; 1024];
         loop {
             match reader.read(&mut buffer) {
-                Ok(0) => { break; }
+                Ok(0) => { 
+                    let _ = app_handle.emit_to("terminal-panel", "pty-exit", "EOF");
+                    break; 
+                }
                 Ok(n) => {
                     let data = &buffer[..n];
                     let b64 = general_purpose::STANDARD.encode(data);
                     let _ = app_handle.emit_to("terminal-panel", "pty-data", PtyPayload { data: b64 });
                 }
-                Err(e) => { println!("ERROR: PTY read error: {}", e); break; }
+                Err(e) => { 
+                    println!("ERROR: PTY read error: {}", e); 
+                    let _ = app_handle.emit_to("terminal-panel", "pty-exit", format!("Error: {}", e));
+                    break; 
+                }
             }
         }
     });
 
+    Ok(())
+}
+
+#[tauri::command]
+fn kill_pty(state: tauri::State<'_, TerminalState>) -> Result<(), String> {
+    let mut m = state.master.lock().unwrap();
+    *m = None;
+    let mut w = state.writer.lock().unwrap();
+    *w = None;
     Ok(())
 }
 
@@ -1507,7 +1522,8 @@ fn main() {
             get_obs_status,
             gsmtc_action,
             register_hotkeys,
-            set_window_height
+            set_window_height,
+            kill_pty
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
