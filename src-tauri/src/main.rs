@@ -7,7 +7,8 @@ use std::fs;
 use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetWindowTextW, SetWindowPos, 
     HWND_TOPMOST, SWP_NOACTIVATE, SWP_SHOWWINDOW, SWP_FRAMECHANGED,
-    GetWindowLongW, SetWindowLongW, GWL_STYLE, WS_POPUP,
+    GetWindowLongW, SetWindowLongW, GWL_STYLE, GWL_EXSTYLE, WS_POPUP,
+    WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE,
     SystemParametersInfoW, SPI_SETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS
 };
 use windows::Win32::UI::Shell::{
@@ -108,16 +109,38 @@ struct TerminalState {
     master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
 }
 
-fn get_settings_path(handle: tauri::AppHandle) -> PathBuf {
-    let mut path = handle.path().app_data_dir().unwrap();
-    eprintln!("DEBUG: App Data Dir: {:?}", path);
-    fs::create_dir_all(&path).ok();
+fn get_settings_path(handle: &tauri::AppHandle) -> PathBuf {
+    let mut path = handle.path().home_dir().unwrap_or_else(|_| PathBuf::from("."));
+    path.push(".aeropeks");
+    
+    if !path.exists() {
+        let _ = fs::create_dir_all(&path);
+    }
+    
     path.push("settings.json");
     path
 }
 
+fn migrate_settings(handle: &tauri::AppHandle, new_path: &std::path::Path) {
+    if new_path.exists() {
+        return;
+    }
+
+    if let Ok(old_dir) = handle.path().app_data_dir() {
+        let old_path = old_dir.join("settings.json");
+        if old_path.exists() {
+            println!("DEBUG: Migrating settings from {:?} to {:?}", old_path, new_path);
+            if let Err(e) = fs::rename(&old_path, new_path) {
+                eprintln!("DEBUG ERROR: Migration failed: {}", e);
+            }
+        }
+    }
+}
+
 fn fetch_settings_helper(handle: tauri::AppHandle) -> AppSettings {
-    let path = get_settings_path(handle);
+    let path = get_settings_path(&handle);
+    migrate_settings(&handle, &path);
+    
     println!("DEBUG: Checking settings file at {:?}. Exists: {}", path, path.exists());
     if !path.exists() {
         return AppSettings::default();
@@ -177,7 +200,7 @@ fn show_terminal_context_menu(window: tauri::Window, state: tauri::State<'_, Sha
 #[tauri::command]
 fn save_settings(settings: AppSettings, handle: tauri::AppHandle, state: tauri::State<'_, SharedSettings>) -> Result<(), String> {
     println!("DEBUG: Saving settings. Plex URL: {}, Token Length: {} chars", settings.plex_url, settings.plex_token.len());
-    let path = get_settings_path(handle.clone());
+    let path = get_settings_path(&handle);
     let content = serde_json::to_string(&settings).map_err(|e| e.to_string())?;
     fs::write(path, content).map_err(|e| e.to_string())?;
     
@@ -1198,6 +1221,9 @@ fn register_app_bar(hwnd_v: HWND, width: u32) {
         let current_style = GetWindowLongW(hwnd_v, GWL_STYLE);
         let _ = SetWindowLongW(hwnd_v, GWL_STYLE, (current_style as u32 | WS_POPUP.0) as i32);
 
+        let current_ex_style = GetWindowLongW(hwnd_v, GWL_EXSTYLE);
+        let _ = SetWindowLongW(hwnd_v, GWL_EXSTYLE, (current_ex_style as u32 | WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0) as i32);
+
         let mut abd = APPBARDATA {
             cbSize: std::mem::size_of::<APPBARDATA>() as u32,
             hWnd: hwnd_v,
@@ -1299,6 +1325,7 @@ fn main() {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize { width: size.width, height: 32 }));
                     let _ = window.set_shadow(false);
+                    let _ = window.set_skip_taskbar(true); // Ensure no taskbar presence
                     let hwnd = window.hwnd().unwrap();
                     register_app_bar(HWND(hwnd.0), size.width);
 
