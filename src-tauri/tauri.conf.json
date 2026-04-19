@@ -67,18 +67,19 @@
         "shadow": false
       },
       {
-        "label": "launcher-panel",
-        "title": "Aeropeks Launcher",
-        "url": "/?window=launcher-panel",
-        "width": 600,
-        "height": 400,
+        "label": "taskbar-bottom",
+        "title": "Aeropeks Taskbar",
+        "url": "/?window=taskbar-bottom",
+        "width": 1920,
+        "height": 40,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,
-        "visible": false,
-        "skipTaskbar": true,
-        "shadow": false,
-        "center": true
+        "visible": true,
+        "x": 0,
+        "y": 0,
+        "center": false,
+        "skipTaskbar": true
       }
     ],
     "security": {

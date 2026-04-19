@@ -20,6 +20,23 @@ interface AppSettings {
   obs_websocket_url: string;
   obs_websocket_password: string;
   use_24h: boolean;
+  reserve_screen_space: boolean;
+  hide_native_taskbar: boolean;
+  debug_inspector: boolean;
+}
+
+interface DebugWindowInfo {
+  hwnd: number;
+  title: string;
+  app_name: string;
+  class_name: string;
+  process_path: string | null;
+  app_id: string | null;
+  relaunch_command: string | null;
+  relaunch_icon: string | null;
+  identity_key: string;
+  icon_source: string;
+  inclusion_reason: string;
 }
 
 interface LocationResult {
@@ -47,6 +64,11 @@ function Settings() {
 
   const [obsUrl, setObsUrl] = useState("");
   const [obsPassword, setObsPassword] = useState("");
+  const [reserveScreenSpace, setReserveScreenSpace] = useState(true);
+  const [hideNativeTaskbar, setHideNativeTaskbar] = useState(false);
+  const [debugInspector, setDebugInspector] = useState(false);
+  const [debugWindows, setDebugWindows] = useState<DebugWindowInfo[]>([]);
+  const [shellMessage, setShellMessage] = useState("");
 
   useEffect(() => {
     invoke<AppSettings>("get_settings").then((s) => {
@@ -61,6 +83,9 @@ function Settings() {
       setObsUrl(s.obs_websocket_url || "");
       setObsPassword(s.obs_websocket_password || "");
       setUse24h(s.use_24h !== false);
+      setReserveScreenSpace(s.reserve_screen_space !== false);
+      setHideNativeTaskbar(s.hide_native_taskbar === true);
+      setDebugInspector(s.debug_inspector === true);
     });
   }, []);
 
@@ -102,6 +127,9 @@ function Settings() {
         obs_websocket_url: obsUrl,
         obs_websocket_password: obsPassword,
         use_24h: use24h,
+        reserve_screen_space: reserveScreenSpace,
+        hide_native_taskbar: hideNativeTaskbar,
+        debug_inspector: debugInspector,
       },
     });
     // Re-register hotkeys
@@ -111,6 +139,34 @@ function Settings() {
     document.documentElement.style.setProperty("--accent", accentColor);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  };
+
+  const refreshDebugWindows = async () => {
+    try {
+      const snapshot = await invoke<DebugWindowInfo[]>("get_window_debug_snapshot");
+      setDebugWindows(snapshot);
+    } catch (e) {
+      console.error("Failed to load window debug snapshot", e);
+    }
+  };
+
+  const handleRestoreShell = async () => {
+    try {
+      await invoke("restore_shell_state");
+      setShellMessage("Windows taskbar and work area restored.");
+    } catch (e) {
+      setShellMessage(`Restore failed: ${String(e)}`);
+    }
+  };
+
+  const handleClearIconCache = async () => {
+    try {
+      await invoke("clear_icon_cache");
+      await refreshDebugWindows();
+      setShellMessage("Icon cache cleared. Aeropeks will rebuild icons as windows refresh.");
+    } catch (e) {
+      setShellMessage(`Icon cache clear failed: ${String(e)}`);
+    }
   };
 
   const addShortcut = () => {
@@ -264,6 +320,103 @@ function Settings() {
           </div>
           <span className="setting-hint">Enable "WebSocket Server" in OBS Studio for live status tracking.</span>
         </div>
+      </div>
+
+      <div className="setting-section">
+        <h4>Shell Companion</h4>
+        <div className="setting-group">
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={reserveScreenSpace}
+              onChange={(e) => setReserveScreenSpace(e.target.checked)}
+            />
+            Reserve screen space for Aeropeks bars
+          </label>
+          <span className="setting-hint">
+            Companion mode keeps Explorer alive. Turn this off if Windows work-area reservation gets weird; saving will restore the native work area.
+          </span>
+        </div>
+
+        <div className="setting-group">
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={hideNativeTaskbar}
+              onChange={(e) => setHideNativeTaskbar(e.target.checked)}
+            />
+            Hide the native Windows taskbar
+          </label>
+          <span className="setting-hint">
+            Advanced replacement mode. Leave this off unless you want Aeropeks to take over more shell surface.
+          </span>
+        </div>
+
+        <div className="shell-actions">
+          <button onClick={handleRestoreShell}>Restore Windows Shell</button>
+          <button onClick={handleClearIconCache}>Clear Icon Cache</button>
+        </div>
+        {shellMessage && <span className="setting-hint">{shellMessage}</span>}
+
+        <div className="setting-group">
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={debugInspector}
+              onChange={(e) => setDebugInspector(e.target.checked)}
+            />
+            Show window identity inspector
+          </label>
+          <span className="setting-hint">
+            Use this when an app shows the wrong icon. It reveals the AUMID, relaunch command, process path, and icon source Aeropeks picked.
+          </span>
+        </div>
+
+        {debugInspector && (
+          <div className="debug-inspector">
+            <div className="section-header">
+              <h4>Window Identity Snapshot</h4>
+              <button className="text-button" onClick={refreshDebugWindows}>Refresh</button>
+            </div>
+            <div className="debug-window-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>App</th>
+                    <th>Title</th>
+                    <th>Class</th>
+                    <th>AUMID</th>
+                    <th>Relaunch</th>
+                    <th>Path</th>
+                    <th>Icon</th>
+                    <th>Why included</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {debugWindows.map((win) => (
+                    <tr key={win.hwnd}>
+                      <td>{win.app_name || "-"}</td>
+                      <td title={win.title}>{win.title}</td>
+                      <td>{win.class_name || "-"}</td>
+                      <td title={win.app_id || ""}>{win.app_id || "-"}</td>
+                      <td title={win.relaunch_command || win.relaunch_icon || ""}>
+                        {win.relaunch_command || win.relaunch_icon || "-"}
+                      </td>
+                      <td title={win.process_path || ""}>{win.process_path || "-"}</td>
+                      <td title={win.identity_key}>{win.icon_source || "-"}</td>
+                      <td>{win.inclusion_reason}</td>
+                    </tr>
+                  ))}
+                  {debugWindows.length === 0 && (
+                    <tr>
+                      <td colSpan={8}>Click refresh to capture the current taskbar window identity list.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="setting-section">

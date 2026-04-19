@@ -6,6 +6,7 @@ import Settings from "./Settings";
 import ExpandedPlayer from "./ExpandedPlayer";
 import Terminal from "./Terminal";
 import Launcher from "./Launcher";
+import TaskbarBottom from "./TaskbarBottom";
 import "./index.css";
 
 function Root() {
@@ -35,6 +36,10 @@ function Root() {
   
   if (windowType === "launcher-panel") {
     return <Launcher />;
+  }
+
+  if (windowType === "taskbar-bottom") {
+    return <TaskbarBottom />;
   }
 
   // Only render App for the 'main' window explicitly

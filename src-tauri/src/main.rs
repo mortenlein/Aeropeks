@@ -4,17 +4,40 @@
 use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
 use std::fs;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetWindowTextW, SetWindowPos, 
     HWND_TOPMOST, SWP_NOACTIVATE, SWP_SHOWWINDOW, SWP_FRAMECHANGED,
     GetWindowLongW, SetWindowLongW, GWL_STYLE, GWL_EXSTYLE, WS_POPUP,
     WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE,
-    SystemParametersInfoW, SPI_SETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS
+    SystemParametersInfoW, SPI_SETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    EnumWindows, IsWindowVisible, SetForegroundWindow, ShowWindow, SW_RESTORE,
+    GetWindowThreadProcessId, GetClassNameW, GetIconInfo, DestroyIcon,
+    SendMessageTimeoutW, GetClassLongPtrW, WM_GETICON, ICON_BIG, ICON_SMALL,
+    ICON_SMALL2, SMTO_ABORTIFHUNG, GCLP_HICON, GCLP_HICONSM, HICON,
+    SW_HIDE, SW_SHOW
 };
 use windows::Win32::UI::Shell::{
-    SHAppBarMessage, APPBARDATA, ABM_NEW, ABM_SETPOS, ABM_QUERYPOS, ABE_TOP
+    SHAppBarMessage, APPBARDATA, ABM_NEW, ABM_SETPOS, ABM_QUERYPOS, ABE_TOP, ABE_BOTTOM,
+    ExtractIconExW, IShellItemImageFactory, SHCreateItemFromParsingName, SHGetFileInfoW,
+    SHGFI_ICON, SHGFI_LARGEICON, SHFILEINFOW, SIIGBF_BIGGERSIZEOK
 };
-use windows::Win32::Foundation::{HWND, RECT};
+use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, PROPERTYKEY, SHGetPropertyStoreForWindow};
+use windows::Win32::Graphics::Gdi::{
+    GetDIBits, GetObjectW, CreateCompatibleDC, DeleteDC, DeleteObject,
+    BITMAP, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, BI_RGB, HBITMAP
+};
+use std::collections::{HashMap, HashSet};
+use windows::Win32::System::Threading::{
+    OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_NAME_WIN32
+};
+use windows::Win32::Storage::EnhancedStorage::{
+    PKEY_AppUserModel_ID, PKEY_AppUserModel_RelaunchCommand, PKEY_AppUserModel_RelaunchIconResource
+};
+use windows::Win32::System::Com::{CoTaskMemFree, IBindCtx};
+use windows::Win32::System::Com::StructuredStorage::{PropVariantClear, PropVariantToStringAlloc};
+use windows::Win32::Foundation::{CloseHandle, HWND, RECT, SIZE, LPARAM, WPARAM};
 use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
 use tauri::{Window, Manager, Emitter, AppHandle, State};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -41,8 +64,10 @@ struct PtyPayload {
 
 fn default_accent_color() -> String { "#22c55e".to_string() }
 fn default_plex_url() -> String { "http://localhost:32400".to_string() }
-fn default_plex_token() -> String { "".to_string() }
 fn default_true() -> bool { true }
+fn default_reserve_screen_space() -> bool { true }
+fn default_hide_native_taskbar() -> bool { false }
+fn default_debug_inspector() -> bool { false }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct TerminalShortcut {
@@ -82,6 +107,12 @@ struct AppSettings {
     obs_websocket_password: String,
     #[serde(default = "default_true")]
     use_24h: bool,
+    #[serde(default = "default_reserve_screen_space")]
+    reserve_screen_space: bool,
+    #[serde(default = "default_hide_native_taskbar")]
+    hide_native_taskbar: bool,
+    #[serde(default = "default_debug_inspector")]
+    debug_inspector: bool,
 }
 
 impl Default for AppSettings {
@@ -97,6 +128,9 @@ impl Default for AppSettings {
             obs_websocket_url: "".to_string(),
             obs_websocket_password: "".to_string(),
             use_24h: true,
+            reserve_screen_space: true,
+            hide_native_taskbar: false,
+            debug_inspector: false,
         }
     }
 }
@@ -205,8 +239,19 @@ fn save_settings(settings: AppSettings, handle: tauri::AppHandle, state: tauri::
     fs::write(path, content).map_err(|e| e.to_string())?;
     
     let mut current_settings = state.lock().map_err(|e| e.to_string())?;
-    *current_settings = settings;
+    let previous_settings = current_settings.clone();
+    *current_settings = settings.clone();
     handle.emit("settings-changed", current_settings.clone()).ok();
+    drop(current_settings);
+
+    if previous_settings.hide_native_taskbar != settings.hide_native_taskbar {
+        set_native_taskbar_visible(!settings.hide_native_taskbar);
+    }
+
+    if previous_settings.reserve_screen_space && !settings.reserve_screen_space {
+        let _ = restore_shell_state_internal(&handle);
+    }
+
     Ok(())
 }
 
@@ -588,10 +633,10 @@ use windows::Win32::Media::Audio::{eCapture};
 fn get_mic_status() -> Result<bool, String> {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-        let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).map_err(|e| e.to_string())?;
-        let device = enumerator.GetDefaultAudioEndpoint(eCapture, eConsole).map_err(|e| e.to_string())?;
-        let volume = device.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None).map_err(|e| e.to_string())?;
-        Ok(volume.GetMute().map_err(|e| e.to_string())?.as_bool())
+        let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).map_err(|e: windows::core::Error| e.to_string())?;
+        let device = enumerator.GetDefaultAudioEndpoint(eCapture, eConsole).map_err(|e: windows::core::Error| e.to_string())?;
+        let volume = device.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None).map_err(|e: windows::core::Error| e.to_string())?;
+        Ok(volume.GetMute().map_err(|e: windows::core::Error| e.to_string())?.as_bool())
     }
 }
 
@@ -599,11 +644,11 @@ fn get_mic_status() -> Result<bool, String> {
 fn toggle_mic_mute() -> Result<bool, String> {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-        let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).map_err(|e| e.to_string())?;
-        let device = enumerator.GetDefaultAudioEndpoint(eCapture, eConsole).map_err(|e| e.to_string())?;
-        let volume = device.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None).map_err(|e| e.to_string())?;
-        let current_mute = volume.GetMute().map_err(|e| e.to_string())?;
-        volume.SetMute(!current_mute, std::ptr::null()).map_err(|e| e.to_string())?;
+        let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).map_err(|e: windows::core::Error| e.to_string())?;
+        let device = enumerator.GetDefaultAudioEndpoint(eCapture, eConsole).map_err(|e: windows::core::Error| e.to_string())?;
+        let volume = device.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None).map_err(|e: windows::core::Error| e.to_string())?;
+        let current_mute = volume.GetMute().map_err(|e: windows::core::Error| e.to_string())?;
+        volume.SetMute(!current_mute, std::ptr::null()).map_err(|e: windows::core::Error| e.to_string())?;
         Ok(!current_mute.as_bool())
     }
 }
@@ -1190,6 +1235,298 @@ fn kill_pty(state: tauri::State<'_, TerminalState>) -> Result<(), String> {
     Ok(())
 }
 
+fn bitmap_handle_as_base64(h_bitmap: HBITMAP) -> Option<String> {
+    unsafe {
+        if h_bitmap.is_invalid() {
+            return None;
+        }
+
+        let mut bitmap = BITMAP::default();
+        if GetObjectW(
+            h_bitmap,
+            std::mem::size_of::<BITMAP>() as i32,
+            Some(&mut bitmap as *mut _ as *mut _),
+        ) == 0 {
+            return None;
+        }
+
+        let width = bitmap.bmWidth;
+        let height = bitmap.bmHeight.abs();
+        if width <= 0 || height <= 0 {
+            return None;
+        }
+
+        let hdc_screen = CreateCompatibleDC(None);
+        let mut bitmap_info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: width,
+                biHeight: -height,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0 as u32,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let mut buffer = vec![0u8; (width * height * 4) as usize];
+
+        if GetDIBits(hdc_screen, h_bitmap, 0, height as u32, Some(buffer.as_mut_ptr() as *mut _), &mut bitmap_info, DIB_RGB_COLORS) == 0 {
+            let _ = DeleteDC(hdc_screen);
+            return None;
+        }
+
+        // Convert BGRA to RGBA and flip if needed (though biHeight negative handled it)
+        for i in (0..buffer.len()).step_by(4) {
+            let b = buffer[i];
+            let r = buffer[i + 2];
+            buffer[i] = r;
+            buffer[i + 2] = b;
+        }
+
+        // Cleanup
+        let _ = DeleteDC(hdc_screen);
+
+        // Simple BMP header + data encoding or just raw for now?
+        // Let's use a simple BMP header to make it a valid Image data URI
+        let file_size = 54 + buffer.len() as u32;
+        let mut bmp_file = Vec::with_capacity(file_size as usize);
+        
+        // File Header
+        bmp_file.extend_from_slice(b"BM");
+        bmp_file.extend_from_slice(&file_size.to_le_bytes());
+        bmp_file.extend_from_slice(&[0, 0, 0, 0]); // Reserved
+        bmp_file.extend_from_slice(&54u32.to_le_bytes()); // Offset
+        
+        // Info Header
+        bmp_file.extend_from_slice(&40u32.to_le_bytes()); // Size
+        bmp_file.extend_from_slice(&width.to_le_bytes());
+        bmp_file.extend_from_slice(&(-height).to_le_bytes()); // Top-down
+        bmp_file.extend_from_slice(&1u16.to_le_bytes()); // Planes
+        bmp_file.extend_from_slice(&32u16.to_le_bytes()); // BitCount
+        bmp_file.extend_from_slice(&0u32.to_le_bytes()); // Compression (BI_RGB)
+        bmp_file.extend_from_slice(&(buffer.len() as u32).to_le_bytes());
+        bmp_file.extend_from_slice(&0u32.to_le_bytes()); // XPels
+        bmp_file.extend_from_slice(&0u32.to_le_bytes()); // YPels
+        bmp_file.extend_from_slice(&0u32.to_le_bytes()); // Colors
+        bmp_file.extend_from_slice(&0u32.to_le_bytes()); // Important
+
+        bmp_file.extend_from_slice(&buffer);
+
+        use base64::Engine;
+        Some(format!("data:image/bmp;base64,{}", base64::engine::general_purpose::STANDARD.encode(&bmp_file)))
+    }
+}
+
+fn icon_handle_as_base64(h_icon: HICON) -> Option<String> {
+    unsafe {
+        if h_icon.is_invalid() {
+            return None;
+        }
+
+        let mut icon_info = windows::Win32::UI::WindowsAndMessaging::ICONINFO::default();
+        if GetIconInfo(h_icon, &mut icon_info).is_err() {
+            return None;
+        }
+
+        let icon = bitmap_handle_as_base64(icon_info.hbmColor);
+        let _ = DeleteObject(icon_info.hbmColor);
+        let _ = DeleteObject(icon_info.hbmMask);
+        icon
+    }
+}
+
+fn extract_icon_as_base64(path: &str) -> Option<String> {
+    unsafe {
+        let mut path_u16: Vec<u16> = path.encode_utf16().collect();
+        path_u16.push(0);
+        
+        let mut sfi = SHFILEINFOW::default();
+        let h_success = SHGetFileInfoW(
+            windows::core::PCWSTR(path_u16.as_ptr()),
+            windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES(0),
+            Some(&mut sfi as *mut _ as *mut _),
+            std::mem::size_of::<SHFILEINFOW>() as u32,
+            SHGFI_ICON | SHGFI_LARGEICON
+        );
+
+        if h_success == 0 || sfi.hIcon.is_invalid() {
+            return None;
+        }
+
+        let icon = icon_handle_as_base64(sfi.hIcon);
+        let _ = DestroyIcon(sfi.hIcon);
+        icon
+    }
+}
+
+fn pwstr_to_string(ptr: *mut u16) -> Option<String> {
+    if ptr.is_null() {
+        return None;
+    }
+
+    unsafe {
+        let mut len = 0;
+        while *ptr.add(len) != 0 {
+            len += 1;
+        }
+
+        Some(String::from_utf16_lossy(std::slice::from_raw_parts(ptr, len)))
+    }
+}
+
+fn window_property_string(hwnd: HWND, key: &PROPERTYKEY) -> Option<String> {
+    unsafe {
+        let store: IPropertyStore = SHGetPropertyStoreForWindow(hwnd).ok()?;
+        let mut value = store.GetValue(key as *const _).ok()?;
+        let raw = PropVariantToStringAlloc(&value).ok()?;
+        let text = pwstr_to_string(raw.0).map(|s| s.trim().to_string());
+
+        CoTaskMemFree(Some(raw.0 as *const _));
+        let _ = PropVariantClear(&mut value);
+
+        text.filter(|s| !s.is_empty())
+    }
+}
+
+fn extract_apps_folder_icon_as_base64(app_id: &str) -> Option<String> {
+    unsafe {
+        let parsing_name = format!("shell:AppsFolder\\{}", app_id);
+        let mut parsing_name_u16: Vec<u16> = parsing_name.encode_utf16().collect();
+        parsing_name_u16.push(0);
+
+        let item: IShellItemImageFactory = SHCreateItemFromParsingName(
+            windows::core::PCWSTR(parsing_name_u16.as_ptr()),
+            None::<&IBindCtx>,
+        ).ok()?;
+
+        let bitmap = item.GetImage(SIZE { cx: 32, cy: 32 }, SIIGBF_BIGGERSIZEOK).ok()?;
+        let icon = bitmap_handle_as_base64(bitmap);
+        let _ = DeleteObject(bitmap);
+        icon
+    }
+}
+
+fn parse_icon_resource(resource: &str) -> Option<(String, i32)> {
+    let trimmed = resource.trim().trim_matches('"').trim_start_matches('@').trim();
+    let (path, index) = match trimmed.rsplit_once(',') {
+        Some((path, index)) => {
+            let parsed_index = index.trim().parse::<i32>().unwrap_or(0);
+            (path.trim().trim_matches('"'), parsed_index)
+        }
+        None => (trimmed, 0),
+    };
+
+    if path.is_empty() {
+        None
+    } else {
+        Some((path.to_string(), index))
+    }
+}
+
+fn extract_icon_resource_as_base64(resource: &str) -> Option<String> {
+    unsafe {
+        let (path, index) = parse_icon_resource(resource)?;
+        let mut path_u16: Vec<u16> = path.encode_utf16().collect();
+        path_u16.push(0);
+
+        let mut large_icon = HICON::default();
+        if ExtractIconExW(
+            windows::core::PCWSTR(path_u16.as_ptr()),
+            index,
+            Some(&mut large_icon),
+            None,
+            1,
+        ) == 0 || large_icon.is_invalid() {
+            return None;
+        }
+
+        let icon = icon_handle_as_base64(large_icon);
+        let _ = DestroyIcon(large_icon);
+        icon
+    }
+}
+
+fn taskbar_identity_for_window(hwnd: HWND, process_path: Option<&str>) -> String {
+    if let Some(app_id) = window_property_string(hwnd, &PKEY_AppUserModel_ID) {
+        return format!("app-id:{}", app_id);
+    }
+
+    if let Some(relaunch_command) = window_property_string(hwnd, &PKEY_AppUserModel_RelaunchCommand) {
+        return format!("relaunch-command:{}", relaunch_command);
+    }
+
+    process_path
+        .map(|path| format!("path:{}", path))
+        .unwrap_or_else(|| format!("hwnd:{}", hwnd.0 as isize))
+}
+
+#[derive(Serialize, Clone, Debug)]
+struct ResolvedIcon {
+    data_uri: String,
+    source: String,
+}
+
+fn extract_taskbar_icon(hwnd: HWND, process_path: Option<&str>) -> Option<ResolvedIcon> {
+    let relaunch_icon = window_property_string(hwnd, &PKEY_AppUserModel_RelaunchIconResource);
+    let app_id = window_property_string(hwnd, &PKEY_AppUserModel_ID);
+
+    if let Some(icon) = relaunch_icon
+        .as_deref()
+        .and_then(extract_icon_resource_as_base64) {
+        return Some(ResolvedIcon { data_uri: icon, source: "relaunch-icon".to_string() });
+    }
+
+    if let Some(icon) = app_id
+        .as_deref()
+        .and_then(extract_apps_folder_icon_as_base64) {
+        return Some(ResolvedIcon { data_uri: icon, source: "aumid-apps-folder".to_string() });
+    }
+
+    if let Some(icon) = process_path.and_then(extract_icon_as_base64) {
+        return Some(ResolvedIcon { data_uri: icon, source: "process-exe".to_string() });
+    }
+
+    if let Some(icon) = extract_window_icon_as_base64(hwnd) {
+        return Some(ResolvedIcon { data_uri: icon, source: "hwnd-window-icon".to_string() });
+    }
+
+    None
+}
+
+fn extract_window_icon_as_base64(hwnd: HWND) -> Option<String> {
+    unsafe {
+        let icon_candidates = [
+            query_window_icon(hwnd, ICON_BIG as usize),
+            query_window_icon(hwnd, ICON_SMALL2 as usize),
+            query_window_icon(hwnd, ICON_SMALL as usize),
+            HICON(GetClassLongPtrW(hwnd, GCLP_HICON) as *mut _),
+            HICON(GetClassLongPtrW(hwnd, GCLP_HICONSM) as *mut _),
+        ];
+
+        icon_candidates
+            .into_iter()
+            .filter(|icon| !icon.is_invalid())
+            .find_map(icon_handle_as_base64)
+    }
+}
+
+unsafe fn query_window_icon(hwnd: HWND, icon_type: usize) -> HICON {
+    let mut result = 0usize;
+    let _ = SendMessageTimeoutW(
+        hwnd,
+        WM_GETICON,
+        WPARAM(icon_type),
+        LPARAM(0),
+        SMTO_ABORTIFHUNG,
+        100,
+        Some(&mut result),
+    );
+    HICON(result as *mut _)
+}
+
+
 #[tauri::command]
 fn write_pty(data: String, state: tauri::State<'_, TerminalState>) -> Result<(), String> {
     let mut writer = state.writer.lock().unwrap();
@@ -1210,6 +1547,315 @@ fn resize_pty(rows: u16, cols: u16, state: tauri::State<'_, TerminalState>) -> R
             pixel_width: 0,
             pixel_height: 0,
         }).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+// ── Taskbar/Window Management ──────────────────────────────────────
+#[derive(Serialize, Clone, Debug)]
+struct WindowInfo {
+    hwnd: isize,
+    title: String,
+    app_name: String,
+    is_active: bool,
+    icon: Option<String>,
+    icon_source: String,
+    identity_key: String,
+    class_name: String,
+    process_path: Option<String>,
+    app_id: Option<String>,
+    relaunch_command: Option<String>,
+    relaunch_icon: Option<String>,
+    inclusion_reason: String,
+}
+
+#[derive(Serialize, Clone, Debug)]
+struct IconRecord {
+    data_uri: String,
+    source: String,
+}
+
+#[derive(Clone)]
+struct IconService {
+    cache: Arc<Mutex<HashMap<String, IconRecord>>>,
+    cache_dir: Arc<PathBuf>,
+}
+
+impl IconService {
+    fn new() -> Self {
+        let base_dir = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        let cache_dir = base_dir.join("Aeropeks").join("icon-cache");
+        let _ = fs::create_dir_all(&cache_dir);
+
+        Self {
+            cache: Arc::new(Mutex::new(HashMap::new())),
+            cache_dir: Arc::new(cache_dir),
+        }
+    }
+
+    fn cache_path(&self, key: &str) -> PathBuf {
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        self.cache_dir.join(format!("{:x}.txt", hasher.finish()))
+    }
+
+    fn resolve<F>(&self, key: &str, resolver: F) -> (Option<String>, String)
+    where
+        F: FnOnce() -> Option<ResolvedIcon>,
+    {
+        if let Ok(cache) = self.cache.lock() {
+            if let Some(record) = cache.get(key) {
+                return (Some(record.data_uri.clone()), format!("memory/{}", record.source));
+            }
+        }
+
+        let path = self.cache_path(key);
+        if let Ok(raw) = fs::read_to_string(&path) {
+            let mut parts = raw.splitn(2, '\n');
+            let source = parts.next().unwrap_or("disk-cache").to_string();
+            let data_uri = parts.next().unwrap_or("").trim().to_string();
+
+            if data_uri.starts_with("data:image/") {
+                let record = IconRecord { data_uri: data_uri.clone(), source: source.clone() };
+                if let Ok(mut cache) = self.cache.lock() {
+                    cache.insert(key.to_string(), record);
+                }
+                return (Some(data_uri), format!("disk/{}", source));
+            }
+        }
+
+        if let Some(resolved) = resolver() {
+            let record = IconRecord {
+                data_uri: resolved.data_uri.clone(),
+                source: resolved.source.clone(),
+            };
+            let _ = fs::write(&path, format!("{}\n{}", record.source, record.data_uri));
+            if let Ok(mut cache) = self.cache.lock() {
+                cache.insert(key.to_string(), record.clone());
+            }
+            return (Some(record.data_uri), record.source);
+        }
+
+        (None, "missing".to_string())
+    }
+
+    fn clear(&self) -> Result<(), String> {
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.clear();
+        }
+
+        if self.cache_dir.exists() {
+            fs::remove_dir_all(self.cache_dir.as_ref()).map_err(|e| e.to_string())?;
+        }
+        fs::create_dir_all(self.cache_dir.as_ref()).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+struct WindowRegistry {
+    windows: Arc<Mutex<Vec<WindowInfo>>>,
+    signature: Arc<Mutex<String>>,
+    order_keys: Arc<Mutex<Vec<String>>>,
+}
+
+impl WindowRegistry {
+    fn new() -> Self {
+        Self {
+            windows: Arc::new(Mutex::new(Vec::new())),
+            signature: Arc::new(Mutex::new(String::new())),
+            order_keys: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    fn apply_stable_order(&self, windows: &mut Vec<WindowInfo>) {
+        if let Ok(mut order_keys) = self.order_keys.lock() {
+            let present_keys = windows
+                .iter()
+                .map(stable_window_order_key)
+                .collect::<HashSet<_>>();
+
+            order_keys.retain(|key| present_keys.contains(key));
+
+            for window in windows.iter() {
+                let key = stable_window_order_key(window);
+                if !order_keys.contains(&key) {
+                    order_keys.push(key);
+                }
+            }
+
+            let positions = order_keys
+                .iter()
+                .enumerate()
+                .map(|(index, key)| (key.clone(), index))
+                .collect::<HashMap<_, _>>();
+
+            windows.sort_by_key(|window| {
+                positions
+                    .get(&stable_window_order_key(window))
+                    .copied()
+                    .unwrap_or(usize::MAX)
+            });
+        }
+    }
+}
+
+fn stable_window_order_key(window: &WindowInfo) -> String {
+    format!("hwnd:{}", window.hwnd)
+}
+
+#[tauri::command]
+fn get_open_windows(
+    app: AppHandle,
+    registry: tauri::State<'_, WindowRegistry>,
+    icons: tauri::State<'_, IconService>,
+) -> Result<Vec<WindowInfo>, String> {
+    refresh_window_registry(Some(&app), &registry, &icons)
+}
+
+#[tauri::command]
+fn get_window_debug_snapshot(
+    app: AppHandle,
+    registry: tauri::State<'_, WindowRegistry>,
+    icons: tauri::State<'_, IconService>,
+) -> Result<Vec<WindowInfo>, String> {
+    refresh_window_registry(Some(&app), &registry, &icons)
+}
+
+#[tauri::command]
+fn clear_icon_cache(icons: tauri::State<'_, IconService>) -> Result<(), String> {
+    icons.clear()
+}
+
+fn refresh_window_registry(
+    app: Option<&AppHandle>,
+    registry: &WindowRegistry,
+    icons: &IconService,
+) -> Result<Vec<WindowInfo>, String> {
+    let mut windows = enumerate_open_windows(icons)?;
+    registry.apply_stable_order(&mut windows);
+    let signature = windows
+        .iter()
+        .map(|win| format!("{}:{}:{}:{}", win.hwnd, win.identity_key, win.is_active, win.icon_source))
+        .collect::<Vec<_>>()
+        .join("|");
+
+    if let Ok(mut current) = registry.windows.lock() {
+        *current = windows.clone();
+    }
+
+    let mut changed = false;
+    if let Ok(mut last) = registry.signature.lock() {
+        changed = *last != signature;
+        if changed {
+            *last = signature;
+        }
+    }
+
+    if changed {
+        if let Some(handle) = app {
+            let _ = handle.emit("open-windows-changed", windows.clone());
+        }
+    }
+
+    Ok(windows)
+}
+
+fn start_window_registry_thread(app: AppHandle, registry: WindowRegistry, icons: IconService) {
+    thread::spawn(move || loop {
+        let _ = refresh_window_registry(Some(&app), &registry, &icons);
+        thread::sleep(Duration::from_millis(1200));
+    });
+}
+
+fn enumerate_open_windows(icons: &IconService) -> Result<Vec<WindowInfo>, String> {
+    let mut windows: Vec<WindowInfo> = Vec::new();
+    let mut context = (&mut windows, icons.clone());
+
+    unsafe {
+        let _ = windows::Win32::System::Com::CoInitializeEx(
+            None,
+            windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
+        );
+        let _ = EnumWindows(Some(enum_windows_proc), windows::Win32::Foundation::LPARAM(&mut context as *mut _ as isize));
+    }
+
+    Ok(windows)
+}
+
+unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: windows::Win32::Foundation::LPARAM) -> windows::Win32::Foundation::BOOL {
+    let context = &mut *(lparam.0 as *mut (&mut Vec<WindowInfo>, IconService));
+    let windows = &mut context.0;
+    let icons = &context.1;
+    
+    if IsWindowVisible(hwnd).as_bool() {
+        let mut text: [u16; 512] = [0; 512];
+        let len = GetWindowTextW(hwnd, &mut text);
+        let title = String::from_utf16_lossy(&text[..len as usize]);
+
+        if !title.is_empty() && title != "Program Manager" && title != "Aeropeks" {
+            // Filter out Aeropeks own windows or specific background windows
+            let mut class_text: [u16; 512] = [0; 512];
+            let class_len = GetClassNameW(hwnd, &mut class_text);
+            let class_name = String::from_utf16_lossy(&class_text[..class_len as usize]);
+
+            let mut process_id = 0;
+            GetWindowThreadProcessId(hwnd, Some(&mut process_id));
+            
+            let mut app_name = class_name.clone();
+            let mut process_path = None;
+
+            if let Ok(process_handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id) {
+                let mut path_chars: [u16; 1024] = [0; 1024];
+                let mut size = path_chars.len() as u32;
+                if QueryFullProcessImageNameW(process_handle, PROCESS_NAME_WIN32, windows::core::PWSTR(path_chars.as_mut_ptr()), &mut size).is_ok() {
+                    let full_path = String::from_utf16_lossy(&path_chars[..size as usize]);
+                    if let Some(name) = std::path::Path::new(&full_path).file_name() {
+                        app_name = name.to_string_lossy().to_string();
+                    }
+                    process_path = Some(full_path);
+                }
+                let _ = CloseHandle(process_handle);
+            }
+
+            let app_id = window_property_string(hwnd, &PKEY_AppUserModel_ID);
+            let relaunch_command = window_property_string(hwnd, &PKEY_AppUserModel_RelaunchCommand);
+            let relaunch_icon = window_property_string(hwnd, &PKEY_AppUserModel_RelaunchIconResource);
+            let identity_key = taskbar_identity_for_window(hwnd, process_path.as_deref());
+            let (icon, icon_source) = icons.resolve(&identity_key, || {
+                extract_taskbar_icon(hwnd, process_path.as_deref())
+            });
+
+            let is_active = GetForegroundWindow() == hwnd;
+
+            windows.push(WindowInfo {
+                hwnd: hwnd.0 as isize,
+                title,
+                app_name,
+                is_active,
+                icon,
+                icon_source,
+                identity_key,
+                class_name,
+                process_path,
+                app_id,
+                relaunch_command,
+                relaunch_icon,
+                inclusion_reason: "visible titled top-level window".to_string(),
+            });
+        }
+    }
+    true.into()
+}
+
+#[tauri::command]
+fn focus_window(hwnd: isize) -> Result<(), String> {
+    let h = HWND(hwnd as *mut _);
+    unsafe {
+        let _ = ShowWindow(h, SW_RESTORE);
+        let _ = SetForegroundWindow(h);
     }
     Ok(())
 }
@@ -1244,28 +1890,118 @@ fn register_app_bar(hwnd_v: HWND, width: u32) {
     }
 }
 
-fn cleanup_app_bar(hwnd_v: HWND) {
+fn cleanup_app_bar(hwnd_v: HWND, edge: u32) {
     unsafe {
         let mut abd = APPBARDATA {
             cbSize: std::mem::size_of::<APPBARDATA>() as u32,
             hWnd: hwnd_v,
             uCallbackMessage: 0,
-            uEdge: ABE_TOP as u32,
+            uEdge: edge,
             rc: RECT::default(),
             lParam: windows::Win32::Foundation::LPARAM(0),
         };
         SHAppBarMessage(windows::Win32::UI::Shell::ABM_REMOVE, &mut abd);
+    }
+}
 
-        // RESET WORK AREA via SPI_SETWORKAREA (Nuclear Cleanup)
-        // Hardcoded safe reset or better: get screen size.
-        // For now, setting top to 0 is the primary goal.
-        let mut reset_rect = RECT { left: 0, top: 0, right: 3840, bottom: 2160 }; 
+unsafe extern "system" fn enum_native_taskbar_proc(hwnd: HWND, lparam: windows::Win32::Foundation::LPARAM) -> windows::Win32::Foundation::BOOL {
+    let should_show = *(lparam.0 as *const bool);
+    let mut class_text: [u16; 256] = [0; 256];
+    let class_len = GetClassNameW(hwnd, &mut class_text);
+    let class_name = String::from_utf16_lossy(&class_text[..class_len as usize]);
+
+    if class_name == "Shell_TrayWnd" || class_name == "Shell_SecondaryTrayWnd" {
+        let _ = ShowWindow(hwnd, if should_show { SW_SHOW } else { SW_HIDE });
+    }
+
+    true.into()
+}
+
+fn set_native_taskbar_visible(visible: bool) {
+    unsafe {
+        let mut should_show = visible;
+        let _ = EnumWindows(
+            Some(enum_native_taskbar_proc),
+            windows::Win32::Foundation::LPARAM(&mut should_show as *mut _ as isize),
+        );
+    }
+}
+
+fn reset_primary_work_area(handle: &AppHandle) -> Result<(), String> {
+    let monitor = handle
+        .primary_monitor()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "No primary monitor available".to_string())?;
+    let position = monitor.position();
+    let size = monitor.size();
+
+    let mut reset_rect = RECT {
+        left: position.x,
+        top: position.y,
+        right: position.x + size.width as i32,
+        bottom: position.y + size.height as i32,
+    };
+
+    unsafe {
         SystemParametersInfoW(
             SPI_SETWORKAREA,
             0,
             Some(&mut reset_rect as *mut _ as *mut _),
             SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
-        ).ok();
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+fn restore_shell_state_internal(handle: &AppHandle) -> Result<(), String> {
+    if let Some(window) = handle.get_webview_window("main") {
+        if let Ok(hwnd) = window.hwnd() {
+            cleanup_app_bar(HWND(hwnd.0), ABE_TOP as u32);
+        }
+    }
+
+    if let Some(window) = handle.get_webview_window("taskbar-bottom") {
+        if let Ok(hwnd) = window.hwnd() {
+            cleanup_app_bar(HWND(hwnd.0), ABE_BOTTOM as u32);
+        }
+    }
+
+    set_native_taskbar_visible(true);
+    reset_primary_work_area(handle)
+}
+
+#[tauri::command]
+fn restore_shell_state(app: AppHandle) -> Result<(), String> {
+    restore_shell_state_internal(&app)
+}
+
+fn register_bottom_app_bar(hwnd_v: HWND, width: u32, screen_height: u32) {
+    unsafe {
+        let current_style = GetWindowLongW(hwnd_v, GWL_STYLE);
+        let _ = SetWindowLongW(hwnd_v, GWL_STYLE, (current_style as u32 | WS_POPUP.0) as i32);
+
+        let current_ex_style = GetWindowLongW(hwnd_v, GWL_EXSTYLE);
+        let _ = SetWindowLongW(hwnd_v, GWL_EXSTYLE, (current_ex_style as u32 | WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0) as i32);
+
+        let mut abd = APPBARDATA {
+            cbSize: std::mem::size_of::<APPBARDATA>() as u32,
+            hWnd: hwnd_v,
+            uCallbackMessage: 0x0401,
+            uEdge: ABE_BOTTOM as u32,
+            rc: RECT { left: 0, top: (screen_height - 40) as i32, right: width as i32, bottom: screen_height as i32 },
+            lParam: windows::Win32::Foundation::LPARAM(0),
+        };
+
+        let _ = SHAppBarMessage(windows::Win32::UI::Shell::ABM_REMOVE, &mut abd);
+        SHAppBarMessage(ABM_NEW, &mut abd);
+        SHAppBarMessage(ABM_QUERYPOS, &mut abd);
+        abd.rc.top = (screen_height - 40) as i32;
+        abd.rc.bottom = screen_height as i32;
+        SHAppBarMessage(ABM_SETPOS, &mut abd);
+
+        let _ = SetWindowPos(hwnd_v, HWND_TOPMOST, 0, (screen_height - 40) as i32, width as i32, 40, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
     }
 }
 
@@ -1279,9 +2015,14 @@ fn main() {
         master: Arc::new(Mutex::new(None)),
     };
 
+    let icon_service = IconService::new();
+    let window_registry = WindowRegistry::new();
+
     tauri::Builder::default()
         .manage(shared.clone())
         .manage(terminal_state)
+        .manage(icon_service.clone())
+        .manage(window_registry.clone())
         .on_menu_event(|app, event| {
             let id = event.id().as_ref();
             let handle = app.app_handle();
@@ -1315,10 +2056,12 @@ fn main() {
             let initial_settings = fetch_settings_helper(app.handle().clone());
             {
                 if let Ok(mut lock) = shared.lock() {
-                    *lock = initial_settings;
+                    *lock = initial_settings.clone();
                 }
             }
 
+            set_native_taskbar_visible(!initial_settings.hide_native_taskbar);
+            start_window_registry_thread(app.handle().clone(), window_registry.clone(), icon_service.clone());
 
             if let Ok(Some(monitor)) = app.handle().primary_monitor() {
                 let size = monitor.size();
@@ -1327,38 +2070,94 @@ fn main() {
                     let _ = window.set_shadow(false);
                     let _ = window.set_skip_taskbar(true); // Ensure no taskbar presence
                     let hwnd = window.hwnd().unwrap();
-                    register_app_bar(HWND(hwnd.0), size.width);
+                    if initial_settings.reserve_screen_space {
+                        register_app_bar(HWND(hwnd.0), size.width);
 
-                    let w_clone = window.clone();
-                    thread::spawn(move || {
-                        loop {
-                            let _ = w_clone.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x: 0, y: 0 }));
-                            if let Ok(Some(monitor)) = w_clone.primary_monitor() {
-                                let width = monitor.size().width;
-                                let work_area = monitor.work_area();
-                                let hwnd = w_clone.hwnd().unwrap();
-                                let hwnd_v = HWND(hwnd.0);
-                                unsafe {
-                                    let mut abd = APPBARDATA {
-                                        cbSize: std::mem::size_of::<APPBARDATA>() as u32,
-                                        hWnd: hwnd_v,
-                                        uCallbackMessage: 0x0401,
-                                        uEdge: ABE_TOP as u32,
-                                        rc: RECT { left: 0, top: 0, right: width as i32, bottom: 32 },
-                                        lParam: windows::Win32::Foundation::LPARAM(0),
-                                    };
-                                    SHAppBarMessage(ABM_QUERYPOS, &mut abd);
-                                    abd.rc.top = 0; abd.rc.bottom = 32;
-                                    SHAppBarMessage(ABM_SETPOS, &mut abd);
-                                    let current_height = w_clone.inner_size().unwrap_or(tauri::PhysicalSize { width: 0, height: 32 }).height;
-                                    let _ = SetWindowPos(hwnd_v, HWND_TOPMOST, 0, 0, width as i32, current_height as i32, SWP_NOACTIVATE | SWP_FRAMECHANGED);
-                                    
-                                    if work_area.position.y != 32 {
+                        let w_clone = window.clone();
+                        thread::spawn(move || {
+                            loop {
+                                let _ = w_clone.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x: 0, y: 0 }));
+                                if let Ok(Some(monitor)) = w_clone.primary_monitor() {
+                                    let width = monitor.size().width;
+                                    let work_area = monitor.work_area();
+                                    let hwnd = w_clone.hwnd().unwrap();
+                                    let hwnd_v = HWND(hwnd.0);
+                                    unsafe {
+                                        let mut abd = APPBARDATA {
+                                            cbSize: std::mem::size_of::<APPBARDATA>() as u32,
+                                            hWnd: hwnd_v,
+                                            uCallbackMessage: 0x0401,
+                                            uEdge: ABE_TOP as u32,
+                                            rc: RECT { left: 0, top: 0, right: width as i32, bottom: 32 },
+                                            lParam: windows::Win32::Foundation::LPARAM(0),
+                                        };
+                                        SHAppBarMessage(ABM_QUERYPOS, &mut abd);
+                                        abd.rc.top = 0; abd.rc.bottom = 32;
+                                        SHAppBarMessage(ABM_SETPOS, &mut abd);
+                                        let current_height = w_clone.inner_size().unwrap_or(tauri::PhysicalSize { width: 0, height: 32 }).height;
+                                        let _ = SetWindowPos(hwnd_v, HWND_TOPMOST, 0, 0, width as i32, current_height as i32, SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                                        
+                                        if work_area.position.y != 32 {
+                                            let mut new_work_area = RECT {
+                                                left: 0,
+                                                top: 32,
+                                                right: width as i32,
+                                                bottom: monitor.size().height as i32,
+                                            };
+                                            SystemParametersInfoW(
+                                                SPI_SETWORKAREA,
+                                                0,
+                                                Some(&mut new_work_area as *mut _ as *mut _),
+                                                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+                                            ).ok();
+                                        }
+                                    }
+                                }
+                                thread::sleep(Duration::from_secs(5));
+                            }
+                        });
+                    } else {
+                        unsafe {
+                            let _ = SetWindowPos(HWND(hwnd.0), HWND_TOPMOST, 0, 0, size.width as i32, 32, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
+                        }
+                    }
+                }
+                if let Some(window) = app.get_webview_window("taskbar-bottom") {
+                    let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize { width: size.width, height: 40 }));
+                    let _ = window.set_shadow(false);
+                    let _ = window.set_skip_taskbar(true);
+                    let hwnd = window.hwnd().unwrap();
+                    if initial_settings.reserve_screen_space {
+                        register_bottom_app_bar(HWND(hwnd.0), size.width, size.height);
+
+                        let w_clone = window.clone();
+                        thread::spawn(move || {
+                            loop {
+                                if let Ok(Some(monitor)) = w_clone.primary_monitor() {
+                                    let width = monitor.size().width;
+                                    let height = monitor.size().height;
+                                    let hwnd = w_clone.hwnd().unwrap();
+                                    let hwnd_v = HWND(hwnd.0);
+                                    unsafe {
+                                        let mut abd = APPBARDATA {
+                                            cbSize: std::mem::size_of::<APPBARDATA>() as u32,
+                                            hWnd: hwnd_v,
+                                            uCallbackMessage: 0x0401,
+                                            uEdge: ABE_BOTTOM as u32,
+                                            rc: RECT { left: 0, top: (height - 40) as i32, right: width as i32, bottom: height as i32 },
+                                            lParam: windows::Win32::Foundation::LPARAM(0),
+                                        };
+                                        SHAppBarMessage(ABM_QUERYPOS, &mut abd);
+                                        abd.rc.top = (height - 40) as i32; abd.rc.bottom = height as i32;
+                                        SHAppBarMessage(ABM_SETPOS, &mut abd);
+                                        let _ = SetWindowPos(hwnd_v, HWND_TOPMOST, 0, (height - 40) as i32, width as i32, 40, SWP_NOACTIVATE | SWP_FRAMECHANGED);
+
+                                        // Keep the reserved area honest if Explorer or display changes nudge it.
                                         let mut new_work_area = RECT {
                                             left: 0,
                                             top: 32,
                                             right: width as i32,
-                                            bottom: monitor.size().height as i32,
+                                            bottom: (height - 40) as i32,
                                         };
                                         SystemParametersInfoW(
                                             SPI_SETWORKAREA,
@@ -1368,10 +2167,14 @@ fn main() {
                                         ).ok();
                                     }
                                 }
+                                thread::sleep(Duration::from_secs(5));
                             }
-                            thread::sleep(Duration::from_secs(5));
+                        });
+                    } else {
+                        unsafe {
+                            let _ = SetWindowPos(HWND(hwnd.0), HWND_TOPMOST, 0, (size.height - 40) as i32, size.width as i32, 40, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
                         }
-                    });
+                    }
                 }
             }
 
@@ -1383,7 +2186,10 @@ fn main() {
                 .menu(&menu)
                 .show_menu_on_left_click(true)
                 .on_menu_event(|app, event| match event.id.as_ref() {
-                    "quit" => { app.exit(0); }
+                    "quit" => {
+                        let _ = restore_shell_state_internal(app);
+                        app.exit(0);
+                    }
                     "settings" => { open_settings(app.clone()); }
                     _ => {}
                 });
@@ -1473,7 +2279,6 @@ fn main() {
                                         if let Ok(registered) = s.shortcut.parse::<tauri_plugin_global_shortcut::Shortcut>() {
                                             if &registered == shortcut {
                                                 // Execute command
-                                                let app_c = app.clone();
                                                 let cmd = s.cmd.clone();
                                                 std::thread::spawn(move || {
                                                     let _ = std::process::Command::new("cmd")
@@ -1503,16 +2308,12 @@ fn main() {
                         api.prevent_close();
                         let _ = window.hide();
                     } else if window.label() == "main" {
-                        if let Ok(hwnd) = window.hwnd() {
-                            cleanup_app_bar(HWND(hwnd.0));
-                        }
+                        let _ = restore_shell_state_internal(window.app_handle());
                     }
                 }
                 tauri::WindowEvent::Destroyed => {
                     if window.label() == "main" {
-                        if let Ok(hwnd) = window.hwnd() {
-                            cleanup_app_bar(HWND(hwnd.0));
-                        }
+                        let _ = restore_shell_state_internal(window.app_handle());
                     }
                 }
                 _ => {}
@@ -1550,7 +2351,12 @@ fn main() {
             gsmtc_action,
             register_hotkeys,
             set_window_height,
-            kill_pty
+            kill_pty,
+            get_open_windows,
+            get_window_debug_snapshot,
+            clear_icon_cache,
+            restore_shell_state,
+            focus_window
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
