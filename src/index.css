@@ -870,6 +870,7 @@ button.primary:hover {
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+  margin-bottom: 20px;
 }
 
 .weather-popover-container::-webkit-scrollbar {

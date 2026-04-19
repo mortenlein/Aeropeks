@@ -245,7 +245,7 @@ function App() {
   useEffect(() => {
     // Dynamic window expansion for dropdowns/popovers
     if (showVolume || showPowerMenu || showWeather || showTerminalMenu || showBluetoothMenu) {
-       invoke("set_window_height", { height: 700 }).catch(console.error);
+       invoke("set_window_height", { height: 760 }).catch(console.error);
     } else {
        invoke("set_window_height", { height: 32 }).catch(console.error);
     }
