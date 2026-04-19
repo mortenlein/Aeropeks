@@ -1,11 +1,14 @@
 // Aeropeks v0.1.0 - Terminal Fix Build
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
 use std::fs;
 use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetWindowTextW, SetWindowPos, 
     HWND_TOPMOST, SWP_NOACTIVATE, SWP_SHOWWINDOW, SWP_FRAMECHANGED,
-    GetWindowLongW, SetWindowLongW, GWL_STYLE, WS_POPUP,
+    GetWindowLongW, SetWindowLongW, GWL_STYLE, GWL_EXSTYLE, WS_POPUP,
+    WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE,
     SystemParametersInfoW, SPI_SETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS
 };
 use windows::Win32::UI::Shell::{
@@ -25,7 +28,11 @@ use std::io::{Write, Read};
 use base64::{Engine as _, engine::general_purpose};
 use serde_json;
 use walkdir::WalkDir;
-use tauri_plugin_shell::ShellExt;
+#[cfg(windows)]
+
+use std::os::windows::process::CommandExt;
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 
 #[derive(Serialize, Clone)]
 struct PtyPayload {
@@ -47,10 +54,9 @@ struct TerminalShortcut {
 
 fn default_shortcuts() -> Vec<TerminalShortcut> {
     vec![
-        TerminalShortcut { id: "ssh-home".to_string(), label: "SSH: Home Lab (pi@homeserver)".to_string(), cmd: "ssh pi@homeserver.local".to_string(), shortcut: "".to_string() },
-        TerminalShortcut { id: "ssh-prod".to_string(), label: "SSH: Production (root@vps)".to_string(), cmd: "ssh root@production-vps".to_string(), shortcut: "".to_string() },
+        TerminalShortcut { id: "local-bash".to_string(), label: "Local Terminal".to_string(), cmd: "".to_string(), shortcut: "Alt+T".to_string() },
+        TerminalShortcut { id: "ssh-home".to_string(), label: "SSH: Home Lab".to_string(), cmd: "ssh pi@homeserver.local".to_string(), shortcut: "".to_string() },
         TerminalShortcut { id: "git-status".to_string(), label: "Git Status".to_string(), cmd: "git status".to_string(), shortcut: "".to_string() },
-        TerminalShortcut { id: "git-fetch".to_string(), label: "Git Fetch All".to_string(), cmd: "git fetch --all".to_string(), shortcut: "".to_string() },
     ]
 }
 
@@ -103,16 +109,38 @@ struct TerminalState {
     master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
 }
 
-fn get_settings_path(handle: tauri::AppHandle) -> PathBuf {
-    let mut path = handle.path().app_data_dir().unwrap();
-    eprintln!("DEBUG: App Data Dir: {:?}", path);
-    fs::create_dir_all(&path).ok();
+fn get_settings_path(handle: &tauri::AppHandle) -> PathBuf {
+    let mut path = handle.path().home_dir().unwrap_or_else(|_| PathBuf::from("."));
+    path.push(".aeropeks");
+    
+    if !path.exists() {
+        let _ = fs::create_dir_all(&path);
+    }
+    
     path.push("settings.json");
     path
 }
 
+fn migrate_settings(handle: &tauri::AppHandle, new_path: &std::path::Path) {
+    if new_path.exists() {
+        return;
+    }
+
+    if let Ok(old_dir) = handle.path().app_data_dir() {
+        let old_path = old_dir.join("settings.json");
+        if old_path.exists() {
+            println!("DEBUG: Migrating settings from {:?} to {:?}", old_path, new_path);
+            if let Err(e) = fs::rename(&old_path, new_path) {
+                eprintln!("DEBUG ERROR: Migration failed: {}", e);
+            }
+        }
+    }
+}
+
 fn fetch_settings_helper(handle: tauri::AppHandle) -> AppSettings {
-    let path = get_settings_path(handle);
+    let path = get_settings_path(&handle);
+    migrate_settings(&handle, &path);
+    
     println!("DEBUG: Checking settings file at {:?}. Exists: {}", path, path.exists());
     if !path.exists() {
         return AppSettings::default();
@@ -172,7 +200,7 @@ fn show_terminal_context_menu(window: tauri::Window, state: tauri::State<'_, Sha
 #[tauri::command]
 fn save_settings(settings: AppSettings, handle: tauri::AppHandle, state: tauri::State<'_, SharedSettings>) -> Result<(), String> {
     println!("DEBUG: Saving settings. Plex URL: {}, Token Length: {} chars", settings.plex_url, settings.plex_token.len());
-    let path = get_settings_path(handle.clone());
+    let path = get_settings_path(&handle);
     let content = serde_json::to_string(&settings).map_err(|e| e.to_string())?;
     fs::write(path, content).map_err(|e| e.to_string())?;
     
@@ -476,16 +504,24 @@ fn launch_result(handle: AppHandle, result: SearchResult) -> Result<(), String> 
             let _ = open::that(result.action_value);
         }
         "app" | "system" => {
-            let shell = handle.shell();
             if result.action_value.contains(" ") && result.action_type == "system" {
                 let parts: Vec<&str> = result.action_value.split_whitespace().collect();
                 let cmd = parts[0];
                 let args = &parts[1..];
-                shell.command(cmd).args(args).spawn().map_err(|e| e.to_string())?;
+                std::process::Command::new(cmd)
+                    .args(args)
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .spawn()
+                    .map_err(|e| e.to_string())?;
             } else {
-                shell.command("cmd").args(["/C", "start", "", &result.action_value]).spawn().map_err(|e| e.to_string())?;
+                std::process::Command::new("cmd")
+                    .args(["/C", "start", "", &result.action_value])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .spawn()
+                    .map_err(|e| e.to_string())?;
             }
         }
+
         _ => return Err("Unknown action type".to_string()),
     }
 
@@ -535,10 +571,11 @@ fn get_battery_status() -> BatteryStatus {
 #[tauri::command]
 fn system_power_action(action: String) {
     match action.as_str() {
-        "shutdown" => { let _ = std::process::Command::new("shutdown").args(["/s", "/t", "0"]).spawn(); },
-        "restart" => { let _ = std::process::Command::new("shutdown").args(["/r", "/t", "0"]).spawn(); },
+        "shutdown" => { let _ = std::process::Command::new("shutdown").args(["/s", "/t", "0"]).creation_flags(CREATE_NO_WINDOW).spawn(); },
+        "restart" => { let _ = std::process::Command::new("shutdown").args(["/r", "/t", "0"]).creation_flags(CREATE_NO_WINDOW).spawn(); },
         "sleep" => { unsafe { let _ = windows::Win32::System::Power::SetSuspendState(false, false, false); } },
         "lock" => { unsafe { let _ = windows::Win32::System::Shutdown::LockWorkStation(); } },
+
         _ => {},
     }
 }
@@ -588,12 +625,14 @@ async fn set_privacy_mode(enabled: bool) -> Result<(), String> {
     // 2. Camera (PowerShell)
     let cmd = if enabled { "Disable-PnpDevice" } else { "Enable-PnpDevice" };
     let _ = std::process::Command::new("powershell")
+        .creation_flags(CREATE_NO_WINDOW)
         .args([
             "-NoProfile",
             "-Command",
             &format!("Get-PnpDevice -Class Camera -ErrorAction SilentlyContinue | {} -Confirm:$false", cmd)
         ])
         .status();
+
     
     Ok(())
 }
@@ -765,12 +804,14 @@ fn get_bluetooth_status() -> BluetoothStatus {
     // - Targets BTHENUM which are typically paired/connected devices.
     // - Excludes system-facing names like 'Transport', 'Service', 'Enumerator', 'Gateway', etc.
     let output = std::process::Command::new("powershell")
+        .creation_flags(CREATE_NO_WINDOW)
         .args([
             "-NoProfile",
             "-Command",
             "Get-PnpDevice -Class Bluetooth | Where-Object { $_.Status -eq 'OK' -and $_.Present -eq $true -and $_.InstanceId -like 'BTHENUM*' -and $_.FriendlyName -notmatch 'Service|Transport|Enumerator|Gateway|Radio|Adapter|Controller|Generic' } | Select-Object -ExpandProperty FriendlyName"
         ])
         .output();
+
 
     if let Ok(out) = output {
         let stdout = String::from_utf8_lossy(&out.stdout);
@@ -1073,7 +1114,7 @@ fn start_pty(rows: u16, cols: u16, args: Option<Vec<String>>, state: tauri::Stat
     let shell_path = "C:\\Program Files\\Git\\bin\\bash.exe";
     let mut cmd = CommandBuilder::new(shell_path);
     
-    if let Some(cmd_args) = args {
+    if let Some(cmd_args) = args.filter(|a| !a.is_empty()) {
         // Use --login to ensure profile is loaded, and -c to run the command
         cmd.arg("--login");
         cmd.arg("-c");
@@ -1119,17 +1160,33 @@ fn start_pty(rows: u16, cols: u16, args: Option<Vec<String>>, state: tauri::Stat
         let mut buffer = [0u8; 1024];
         loop {
             match reader.read(&mut buffer) {
-                Ok(0) => { break; }
+                Ok(0) => { 
+                    let _ = app_handle.emit_to("terminal-panel", "pty-exit", "EOF");
+                    break; 
+                }
                 Ok(n) => {
                     let data = &buffer[..n];
                     let b64 = general_purpose::STANDARD.encode(data);
                     let _ = app_handle.emit_to("terminal-panel", "pty-data", PtyPayload { data: b64 });
                 }
-                Err(e) => { println!("ERROR: PTY read error: {}", e); break; }
+                Err(e) => { 
+                    println!("ERROR: PTY read error: {}", e); 
+                    let _ = app_handle.emit_to("terminal-panel", "pty-exit", format!("Error: {}", e));
+                    break; 
+                }
             }
         }
     });
 
+    Ok(())
+}
+
+#[tauri::command]
+fn kill_pty(state: tauri::State<'_, TerminalState>) -> Result<(), String> {
+    let mut m = state.master.lock().unwrap();
+    *m = None;
+    let mut w = state.writer.lock().unwrap();
+    *w = None;
     Ok(())
 }
 
@@ -1163,6 +1220,9 @@ fn register_app_bar(hwnd_v: HWND, width: u32) {
     unsafe {
         let current_style = GetWindowLongW(hwnd_v, GWL_STYLE);
         let _ = SetWindowLongW(hwnd_v, GWL_STYLE, (current_style as u32 | WS_POPUP.0) as i32);
+
+        let current_ex_style = GetWindowLongW(hwnd_v, GWL_EXSTYLE);
+        let _ = SetWindowLongW(hwnd_v, GWL_EXSTYLE, (current_ex_style as u32 | WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0) as i32);
 
         let mut abd = APPBARDATA {
             cbSize: std::mem::size_of::<APPBARDATA>() as u32,
@@ -1265,6 +1325,7 @@ fn main() {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize { width: size.width, height: 32 }));
                     let _ = window.set_shadow(false);
+                    let _ = window.set_skip_taskbar(true); // Ensure no taskbar presence
                     let hwnd = window.hwnd().unwrap();
                     register_app_bar(HWND(hwnd.0), size.width);
 
@@ -1415,8 +1476,13 @@ fn main() {
                                                 let app_c = app.clone();
                                                 let cmd = s.cmd.clone();
                                                 std::thread::spawn(move || {
-                                                    let _ = app_c.shell().command("cmd").args(["/C", &cmd]).spawn();
+                                                    let _ = std::process::Command::new("cmd")
+                                                        .args(["/C", &cmd])
+                                                        .creation_flags(CREATE_NO_WINDOW)
+                                                        .spawn();
                                                 });
+
+
                                             }
                                         }
                                     }
@@ -1483,7 +1549,8 @@ fn main() {
             get_obs_status,
             gsmtc_action,
             register_hotkeys,
-            set_window_height
+            set_window_height,
+            kill_pty
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

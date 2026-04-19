@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 jobs:
   publish-tauri:
@@ -39,7 +40,7 @@ jobs:
         with:
           tagName: v__VERSION__ # the action will replace 'v__VERSION__' with the app version from tauri.conf.json
           releaseName: "Aeropeks v__VERSION__"
-          releaseBody: "See the assets below to download the latest version of Aeropeks."
+          releaseBody: "Automated release for Aeropeks. See attached assets for the latest version."
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
