@@ -1,6 +1,6 @@
 {
   "productName": "Aeropeks",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "identifier": "com.aeropeks.app",
   "build": {
     "frontendDist": "../dist",
@@ -26,7 +26,6 @@
         "center": false,
         "skipTaskbar": true
       },
-
       {
         "label": "settings",
         "title": "Aeropeks Settings",
@@ -40,7 +39,6 @@
         "center": true,
         "skipTaskbar": true
       },
-
       {
         "label": "expanded-player",
         "title": "Aeropeks Player",
@@ -55,7 +53,6 @@
         "shadow": false,
         "skipTaskbar": true
       },
-
       {
         "label": "terminal-panel",
         "title": "Terminal",
