@@ -146,6 +146,18 @@ const TaskbarBottom = () => {
         .catch(() => {});
     });
   };
+  // Ensure body/html don't clip the preview popup above the dock
+  useEffect(() => {
+    document.body.style.overflow = 'visible';
+    document.documentElement.style.overflow = 'visible';
+    document.documentElement.style.height = '100%';
+    document.body.style.height = '100%';
+    const root = document.getElementById('root');
+    if (root) {
+      root.style.overflow = 'visible';
+      root.style.height = '100%';
+    }
+  }, []);
 
   const resizeWindow = useCallback(async (expanded: boolean) => {
     try {
@@ -154,10 +166,10 @@ const TaskbarBottom = () => {
       if (!monitor) return;
       const screenH = monitor.size.height;
       const screenW = monitor.size.width;
-      const scaleFactor = monitor.scaleFactor || 1;
       const h = expanded ? 300 : 60;
-      await win.setSize(new (await import("@tauri-apps/api/dpi")).PhysicalSize(screenW, h));
-      await win.setPosition(new (await import("@tauri-apps/api/dpi")).PhysicalPosition(0, screenH - h));
+      const { PhysicalSize, PhysicalPosition } = await import("@tauri-apps/api/dpi");
+      await win.setSize(new PhysicalSize(screenW, h));
+      await win.setPosition(new PhysicalPosition(0, screenH - h));
     } catch (e) {
       console.error("Failed to resize taskbar window", e);
     }
@@ -167,10 +179,14 @@ const TaskbarBottom = () => {
     if (timeoutRef.exit) clearTimeout(timeoutRef.exit);
     if (timeoutRef.refresh) clearInterval(timeoutRef.refresh);
     
-    timeoutRef.entry = setTimeout(() => {
+    timeoutRef.entry = setTimeout(async () => {
+      // 1. Tell Rust thread to stop overriding the window position
+      invoke("set_preview_mode", { active: true }).catch(() => {});
+      // 2. Expand window FIRST so there's room for the preview
+      await resizeWindow(true);
+      // 3. Now show the preview (React re-render)
       setHoveredGroup(group.key);
       loadGroupThumbnails(group);
-      resizeWindow(true);
       
       timeoutRef.refresh = setInterval(() => {
         loadGroupThumbnails(group, true);
@@ -182,9 +198,11 @@ const TaskbarBottom = () => {
     if (timeoutRef.entry) clearTimeout(timeoutRef.entry);
     if (timeoutRef.refresh) clearInterval(timeoutRef.refresh);
     
-    timeoutRef.exit = setTimeout(() => {
+    timeoutRef.exit = setTimeout(async () => {
       setHoveredGroup(null);
-      resizeWindow(false);
+      // Shrink window back and re-enable thread positioning
+      await resizeWindow(false);
+      invoke("set_preview_mode", { active: false }).catch(() => {});
     }, 400);
   };
 

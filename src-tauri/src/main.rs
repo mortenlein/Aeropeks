@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::path::PathBuf;
 use std::fs;
 use std::collections::hash_map::DefaultHasher;
@@ -2052,6 +2053,11 @@ fn close_window(hwnd: isize) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn set_preview_mode(active: bool, state: tauri::State<'_, Arc<AtomicBool>>) {
+    state.store(active, Ordering::Relaxed);
+}
+
 fn register_app_bar(hwnd_v: HWND, width: u32) {
     unsafe {
         let current_style = GetWindowLongW(hwnd_v, GWL_STYLE);
@@ -2208,11 +2214,13 @@ fn main() {
 
     let icon_service = IconService::new();
     let window_registry = WindowRegistry::new();
+    let preview_active: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
 
     tauri::Builder::default()
         .manage(shared.clone())
         .manage(terminal_state)
         .manage(icon_service.clone())
+        .manage(preview_active.clone())
         .manage(window_registry.clone())
         .on_menu_event(|app, event| {
             let id = event.id().as_ref();
@@ -2327,6 +2335,7 @@ fn main() {
                             register_bottom_app_bar(hwnd, size.width, size.height);
 
                             let w_clone = window.clone();
+                            let preview_flag = preview_active.clone();
                             thread::spawn(move || {
                                 loop {
                                 if let Ok(Some(monitor)) = w_clone.primary_monitor() {
@@ -2346,7 +2355,10 @@ fn main() {
                                         SHAppBarMessage(ABM_QUERYPOS, &mut abd);
                                         abd.rc.top = (height - 60) as i32; abd.rc.bottom = height as i32;
                                         SHAppBarMessage(ABM_SETPOS, &mut abd);
-                                        let _ = SetWindowPos(hwnd_v, HWND_TOPMOST, 0, (height - 60) as i32, width as i32, 60, SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                                        // Only reposition window if no preview popup is active
+                                        if !preview_flag.load(Ordering::Relaxed) {
+                                            let _ = SetWindowPos(hwnd_v, HWND_TOPMOST, 0, (height - 60) as i32, width as i32, 60, SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                                        }
 
                                         // Keep the reserved area honest if Explorer or display changes nudge it.
                                         let mut new_work_area = RECT {
@@ -2557,7 +2569,8 @@ fn main() {
             close_window,
             focus_window,
             get_virtual_desktop_status,
-            switch_virtual_desktop
+            switch_virtual_desktop,
+            set_preview_mode
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
