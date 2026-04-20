@@ -15,6 +15,8 @@ interface WindowInfo {
 
 const TaskbarBottom = () => {
   const [windows, setWindows] = useState<WindowInfo[]>([]);
+  const [desktopCount, setDesktopCount] = useState(1);
+  const [currentDesktop, setCurrentDesktop] = useState(0);
 
   const fetchWindows = async () => {
     try {
@@ -31,6 +33,18 @@ const TaskbarBottom = () => {
 
   useEffect(() => {
     fetchWindows();
+    
+    const fetchDesktops = async () => {
+      try {
+        const [count, index] = await invoke<[number, number]>("get_virtual_desktop_status");
+        setDesktopCount(count);
+        setCurrentDesktop(index);
+      } catch(e) {}
+    };
+    
+    fetchDesktops();
+    const desktopInterval = setInterval(fetchDesktops, 1500);
+
     let unlisten: (() => void) | undefined;
 
     listen<WindowInfo[]>("open-windows-changed", (event) => {
@@ -44,6 +58,7 @@ const TaskbarBottom = () => {
 
     return () => {
       unlisten?.();
+      clearInterval(desktopInterval);
     };
   }, []);
 
@@ -59,6 +74,21 @@ const TaskbarBottom = () => {
   return (
     <div className="taskbar-bottom-container">
       <div className="taskbar-dock">
+        {desktopCount > 1 && (
+          <>
+            <div className="dock-section desktops">
+              {Array.from({ length: desktopCount }).map((_, idx) => (
+                <div 
+                  key={idx}
+                  title={`Desktop ${idx + 1}`}
+                  className={`desktop-dot ${idx === currentDesktop ? 'active' : ''}`}
+                  onClick={() => invoke("switch_virtual_desktop", { index: idx }).then(() => setCurrentDesktop(idx))}
+                />
+              ))}
+            </div>
+            <div className="dock-divider" />
+          </>
+        )}
         <div className="dock-section apps">
           {windows.map((win) => (
             <div

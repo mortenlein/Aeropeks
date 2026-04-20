@@ -54,6 +54,7 @@ obws = "0.12"
 chrono = "0.4"
 serde_with = "3.9"
 windows-future = "0.3.2"
+winvd = "0.0.48"
 
 [profile.release]
 panic = "abort"

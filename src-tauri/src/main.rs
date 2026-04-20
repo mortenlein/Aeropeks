@@ -487,10 +487,25 @@ fn search_query(query: String) -> Result<Vec<SearchResult>, String> {
             id: "web-google".to_string(),
             title: format!("Search Google for '{}'", q),
             description: "Open in default browser".to_string(),
-            icon: "Search".to_string(),
+            icon: "Globe".to_string(),
             action_type: "web".to_string(),
             action_value: format!("https://www.google.com/search?q={}", urlencoding::encode(q)),
         });
+        return Ok(results);
+    }
+
+    // Command runner
+    if query_lower.starts_with(">") {
+        let cmd = query[1..].trim();
+        results.push(SearchResult {
+            id: format!("cmd-{}", cmd),
+            title: format!("Run: {}", cmd),
+            description: "Execute command securely".to_string(),
+            icon: "Command".to_string(),
+            action_type: "cmd".to_string(),
+            action_value: cmd.to_string(),
+        });
+        return Ok(results);
     }
 
     // 2. System Commands
@@ -567,6 +582,14 @@ fn launch_result(handle: AppHandle, result: SearchResult) -> Result<(), String> 
             }
         }
 
+        "cmd" => {
+            std::thread::spawn(move || {
+                let _ = std::process::Command::new("cmd")
+                    .args(["/C", &result.action_value])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .spawn();
+            });
+        }
         _ => return Err("Unknown action type".to_string()),
     }
 
@@ -683,7 +706,31 @@ async fn set_privacy_mode(enabled: bool) -> Result<(), String> {
 }
 
 
-// ── Bluetooth & Weather ─────────────────────────────────────────────
+// ── Bluetooth & Weather & Desktops ───────────────────────────────────────────
+
+#[tauri::command]
+fn get_virtual_desktop_status() -> Result<(usize, usize), String> {
+    let count = winvd::get_desktop_count().unwrap_or(1) as usize;
+    let current_index = match winvd::get_current_desktop() {
+        Ok(desktop) => winvd::get_desktops()
+            .unwrap_or_default()
+            .iter()
+            .position(|d| d == &desktop)
+            .unwrap_or(0),
+        Err(_) => 0,
+    };
+    Ok((count, current_index))
+}
+
+#[tauri::command]
+fn switch_virtual_desktop(index: usize) -> Result<(), String> {
+    if let Ok(desktops) = winvd::get_desktops() {
+        if let Some(d) = desktops.get(index) {
+            let _ = winvd::switch_desktop(*d);
+        }
+    }
+    Ok(())
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct WeatherDetailed {
@@ -1277,15 +1324,7 @@ fn bitmap_handle_as_base64(h_bitmap: HBITMAP) -> Option<String> {
             return None;
         }
 
-        // Convert BGRA to RGBA and flip if needed (though biHeight negative handled it)
-        for i in (0..buffer.len()).step_by(4) {
-            let b = buffer[i];
-            let r = buffer[i + 2];
-            buffer[i] = r;
-            buffer[i + 2] = b;
-        }
-
-        // Cleanup
+        // We keep it as BGRA because BMP format expects BGRA/BGR pixel ordering.
         let _ = DeleteDC(hdc_screen);
 
         // Simple BMP header + data encoding or just raw for now?
@@ -2069,13 +2108,14 @@ fn main() {
                     let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize { width: size.width, height: 32 }));
                     let _ = window.set_shadow(false);
                     let _ = window.set_skip_taskbar(true); // Ensure no taskbar presence
-                    let hwnd = window.hwnd().unwrap();
-                    if initial_settings.reserve_screen_space {
-                        register_app_bar(HWND(hwnd.0), size.width);
+                    if let Ok(hwnd_raw) = window.hwnd() {
+                        let hwnd = HWND(hwnd_raw.0);
+                        if initial_settings.reserve_screen_space {
+                            register_app_bar(hwnd, size.width);
 
-                        let w_clone = window.clone();
-                        thread::spawn(move || {
-                            loop {
+                            let w_clone = window.clone();
+                            thread::spawn(move || {
+                                loop {
                                 let _ = w_clone.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x: 0, y: 0 }));
                                 if let Ok(Some(monitor)) = w_clone.primary_monitor() {
                                     let width = monitor.size().width;
@@ -2118,21 +2158,24 @@ fn main() {
                         });
                     } else {
                         unsafe {
-                            let _ = SetWindowPos(HWND(hwnd.0), HWND_TOPMOST, 0, 0, size.width as i32, 32, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
+                            let _ = SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, size.width as i32, 32, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
                         }
+                    }
                     }
                 }
                 if let Some(window) = app.get_webview_window("taskbar-bottom") {
                     let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize { width: size.width, height: 40 }));
                     let _ = window.set_shadow(false);
                     let _ = window.set_skip_taskbar(true);
-                    let hwnd = window.hwnd().unwrap();
-                    if initial_settings.reserve_screen_space {
-                        register_bottom_app_bar(HWND(hwnd.0), size.width, size.height);
+                    
+                    if let Ok(hwnd_raw) = window.hwnd() {
+                        let hwnd = HWND(hwnd_raw.0);
+                        if initial_settings.reserve_screen_space {
+                            register_bottom_app_bar(hwnd, size.width, size.height);
 
-                        let w_clone = window.clone();
-                        thread::spawn(move || {
-                            loop {
+                            let w_clone = window.clone();
+                            thread::spawn(move || {
+                                loop {
                                 if let Ok(Some(monitor)) = w_clone.primary_monitor() {
                                     let width = monitor.size().width;
                                     let height = monitor.size().height;
@@ -2172,8 +2215,9 @@ fn main() {
                         });
                     } else {
                         unsafe {
-                            let _ = SetWindowPos(HWND(hwnd.0), HWND_TOPMOST, 0, (size.height - 40) as i32, size.width as i32, 40, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
+                            let _ = SetWindowPos(hwnd, HWND_TOPMOST, 0, (size.height - 40) as i32, size.width as i32, 40, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
                         }
+                    }
                     }
                 }
             }
@@ -2355,8 +2399,9 @@ fn main() {
             get_open_windows,
             get_window_debug_snapshot,
             clear_icon_cache,
-            restore_shell_state,
-            focus_window
+            focus_window,
+            get_virtual_desktop_status,
+            switch_virtual_desktop
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
