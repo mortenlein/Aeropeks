@@ -16,7 +16,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowThreadProcessId, GetClassNameW, GetIconInfo, DestroyIcon,
     SendMessageTimeoutW, GetClassLongPtrW, WM_GETICON, ICON_BIG, ICON_SMALL,
     ICON_SMALL2, SMTO_ABORTIFHUNG, GCLP_HICON, GCLP_HICONSM, HICON,
-    SW_HIDE, SW_SHOW
+    SW_HIDE, SW_SHOW, GetWindowRect, WINDOWPLACEMENT, GetWindowPlacement,
+    SW_SHOWMINIMIZED, SW_MINIMIZE
 };
 use windows::Win32::UI::Shell::{
     SHAppBarMessage, APPBARDATA, ABM_NEW, ABM_SETPOS, ABM_QUERYPOS, ABE_TOP, ABE_BOTTOM,
@@ -26,8 +27,12 @@ use windows::Win32::UI::Shell::{
 use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, PROPERTYKEY, SHGetPropertyStoreForWindow};
 use windows::Win32::Graphics::Gdi::{
     GetDIBits, GetObjectW, CreateCompatibleDC, DeleteDC, DeleteObject,
-    BITMAP, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, BI_RGB, HBITMAP
+    BITMAP, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, BI_RGB, HBITMAP,
+    CreateCompatibleBitmap, SelectObject, SetStretchBltMode, StretchBlt,
+    HALFTONE, SRCCOPY, HGDIOBJ, GetDC, ReleaseDC
 };
+use windows::Win32::Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS};
+use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use std::collections::{HashMap, HashSet};
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_NAME_WIN32
@@ -55,6 +60,7 @@ use walkdir::WalkDir;
 
 use std::os::windows::process::CommandExt;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+const ICON_CACHE_VERSION: &str = "v2-bgra-bmp";
 
 
 #[derive(Serialize, Clone)]
@@ -1565,6 +1571,133 @@ unsafe fn query_window_icon(hwnd: HWND, icon_type: usize) -> HICON {
     HICON(result as *mut _)
 }
 
+#[tauri::command]
+fn get_window_thumbnail(hwnd: isize) -> Result<Option<String>, String> {
+    unsafe {
+        let hwnd = HWND(hwnd as *mut _);
+        let mut info = WINDOWPLACEMENT {
+            length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+            ..Default::default()
+        };
+        let is_minimized = if GetWindowPlacement(hwnd, &mut info).is_ok() {
+            info.showCmd == SW_SHOWMINIMIZED.0 as u32 || info.showCmd == SW_MINIMIZE.0 as u32
+        } else {
+            false
+        };
+
+        if is_minimized {
+            return Ok(None);
+        }
+
+        // Get the full window rect (includes shadow) and the DWM frame (content only)
+        let mut full_rect = RECT::default();
+        let _ = GetWindowRect(hwnd, &mut full_rect);
+
+        let mut frame_rect = RECT::default();
+        let has_frame = DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            &mut frame_rect as *mut _ as *mut _,
+            std::mem::size_of::<RECT>() as u32
+        ).is_ok();
+
+        // Calculate the shadow/border offsets so we can crop them from PrintWindow output
+        let (crop_left, crop_top, crop_right, crop_bottom) = if has_frame {
+            (
+                (frame_rect.left - full_rect.left).max(0),
+                (frame_rect.top - full_rect.top).max(0),
+                (full_rect.right - frame_rect.right).max(0),
+                (full_rect.bottom - frame_rect.bottom).max(0),
+            )
+        } else {
+            (0, 0, 0, 0)
+        };
+
+        let full_width = full_rect.right - full_rect.left;
+        let full_height = full_rect.bottom - full_rect.top;
+        if full_width <= 0 || full_height <= 0 {
+            return Ok(None);
+        }
+
+        // The content region after cropping shadows
+        let content_width = full_width - crop_left - crop_right;
+        let content_height = full_height - crop_top - crop_bottom;
+        if content_width <= 0 || content_height <= 0 {
+            return Ok(None);
+        }
+
+        let max_width = 280;
+        let max_height = 158;
+        let scale = (max_width as f32 / content_width as f32).min(max_height as f32 / content_height as f32).min(1.0);
+        let thumb_width = ((content_width as f32 * scale).round() as i32).max(1);
+        let thumb_height = ((content_height as f32 * scale).round() as i32).max(1);
+
+        let screen_dc = GetDC(None);
+        if screen_dc.is_invalid() {
+            return Ok(None);
+        }
+
+        let full_dc = CreateCompatibleDC(screen_dc);
+        let thumb_dc = CreateCompatibleDC(screen_dc);
+        let full_bitmap = CreateCompatibleBitmap(screen_dc, full_width, full_height);
+        let thumb_bitmap = CreateCompatibleBitmap(screen_dc, thumb_width, thumb_height);
+
+        if full_dc.is_invalid() || thumb_dc.is_invalid() || full_bitmap.is_invalid() || thumb_bitmap.is_invalid() {
+            if !full_bitmap.is_invalid() {
+                let _ = DeleteObject(full_bitmap);
+            }
+            if !thumb_bitmap.is_invalid() {
+                let _ = DeleteObject(thumb_bitmap);
+            }
+            let _ = DeleteDC(full_dc);
+            let _ = DeleteDC(thumb_dc);
+            let _ = ReleaseDC(None, screen_dc);
+            return Ok(None);
+        }
+
+        let old_full = SelectObject(full_dc, HGDIOBJ(full_bitmap.0));
+        let old_thumb = SelectObject(thumb_dc, HGDIOBJ(thumb_bitmap.0));
+
+        let printed = PrintWindow(hwnd, full_dc, PRINT_WINDOW_FLAGS(2)).as_bool();
+        let thumbnail = if printed {
+            let _ = SetStretchBltMode(thumb_dc, HALFTONE);
+            // Copy from the content region (skipping shadow borders) into the thumbnail
+            let stretched = StretchBlt(
+                thumb_dc,
+                0,
+                0,
+                thumb_width,
+                thumb_height,
+                full_dc,
+                crop_left,
+                crop_top,
+                content_width,
+                content_height,
+                SRCCOPY,
+            )
+            .as_bool();
+
+            if stretched {
+                bitmap_handle_as_base64(thumb_bitmap)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let _ = SelectObject(full_dc, old_full);
+        let _ = SelectObject(thumb_dc, old_thumb);
+        let _ = DeleteObject(full_bitmap);
+        let _ = DeleteObject(thumb_bitmap);
+        let _ = DeleteDC(full_dc);
+        let _ = DeleteDC(thumb_dc);
+        let _ = ReleaseDC(None, screen_dc);
+
+        Ok(thumbnail)
+    }
+}
+
 
 #[tauri::command]
 fn write_pty(data: String, state: tauri::State<'_, TerminalState>) -> Result<(), String> {
@@ -1636,6 +1769,7 @@ impl IconService {
 
     fn cache_path(&self, key: &str) -> PathBuf {
         let mut hasher = DefaultHasher::new();
+        ICON_CACHE_VERSION.hash(&mut hasher);
         key.hash(&mut hasher);
         self.cache_dir.join(format!("{:x}.txt", hasher.finish()))
     }
@@ -1901,6 +2035,23 @@ fn focus_window(hwnd: isize) -> Result<(), String> {
 
 // ── AppBar ──────────────────────────────────────────────────────────
 
+#[tauri::command]
+fn close_window(hwnd: isize) -> Result<(), String> {
+    unsafe {
+        let hwnd = HWND(hwnd as *mut _);
+        let _ = SendMessageTimeoutW(
+            hwnd,
+            windows::Win32::UI::WindowsAndMessaging::WM_CLOSE,
+            WPARAM(0),
+            LPARAM(0),
+            SMTO_ABORTIFHUNG,
+            1000,
+            None
+        );
+    }
+    Ok(())
+}
+
 fn register_app_bar(hwnd_v: HWND, width: u32) {
     unsafe {
         let current_style = GetWindowLongW(hwnd_v, GWL_STYLE);
@@ -2029,18 +2180,19 @@ fn register_bottom_app_bar(hwnd_v: HWND, width: u32, screen_height: u32) {
             hWnd: hwnd_v,
             uCallbackMessage: 0x0401,
             uEdge: ABE_BOTTOM as u32,
-            rc: RECT { left: 0, top: (screen_height - 40) as i32, right: width as i32, bottom: screen_height as i32 },
+            rc: RECT { left: 0, top: (screen_height - 60) as i32, right: width as i32, bottom: screen_height as i32 },
             lParam: windows::Win32::Foundation::LPARAM(0),
         };
 
         let _ = SHAppBarMessage(windows::Win32::UI::Shell::ABM_REMOVE, &mut abd);
         SHAppBarMessage(ABM_NEW, &mut abd);
         SHAppBarMessage(ABM_QUERYPOS, &mut abd);
-        abd.rc.top = (screen_height - 40) as i32;
+        abd.rc.top = (screen_height - 60) as i32;
         abd.rc.bottom = screen_height as i32;
         SHAppBarMessage(ABM_SETPOS, &mut abd);
 
-        let _ = SetWindowPos(hwnd_v, HWND_TOPMOST, 0, (screen_height - 40) as i32, width as i32, 40, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
+        // AppBar reserves 60px at screen bottom; window matches
+        let _ = SetWindowPos(hwnd_v, HWND_TOPMOST, 0, (screen_height - 60) as i32, width as i32, 60, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
     }
 }
 
@@ -2164,7 +2316,8 @@ fn main() {
                     }
                 }
                 if let Some(window) = app.get_webview_window("taskbar-bottom") {
-                    let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize { width: size.width, height: 40 }));
+                    // Height must be large enough for preview popups to render above the dock
+                    let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize { width: size.width, height: 60 }));
                     let _ = window.set_shadow(false);
                     let _ = window.set_skip_taskbar(true);
                     
@@ -2187,20 +2340,20 @@ fn main() {
                                             hWnd: hwnd_v,
                                             uCallbackMessage: 0x0401,
                                             uEdge: ABE_BOTTOM as u32,
-                                            rc: RECT { left: 0, top: (height - 40) as i32, right: width as i32, bottom: height as i32 },
+                                            rc: RECT { left: 0, top: (height - 60) as i32, right: width as i32, bottom: height as i32 },
                                             lParam: windows::Win32::Foundation::LPARAM(0),
                                         };
                                         SHAppBarMessage(ABM_QUERYPOS, &mut abd);
-                                        abd.rc.top = (height - 40) as i32; abd.rc.bottom = height as i32;
+                                        abd.rc.top = (height - 60) as i32; abd.rc.bottom = height as i32;
                                         SHAppBarMessage(ABM_SETPOS, &mut abd);
-                                        let _ = SetWindowPos(hwnd_v, HWND_TOPMOST, 0, (height - 40) as i32, width as i32, 40, SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                                        let _ = SetWindowPos(hwnd_v, HWND_TOPMOST, 0, (height - 60) as i32, width as i32, 60, SWP_NOACTIVATE | SWP_FRAMECHANGED);
 
                                         // Keep the reserved area honest if Explorer or display changes nudge it.
                                         let mut new_work_area = RECT {
                                             left: 0,
                                             top: 32,
                                             right: width as i32,
-                                            bottom: (height - 40) as i32,
+                                            bottom: (height - 60) as i32,
                                         };
                                         SystemParametersInfoW(
                                             SPI_SETWORKAREA,
@@ -2215,7 +2368,7 @@ fn main() {
                         });
                     } else {
                         unsafe {
-                            let _ = SetWindowPos(hwnd, HWND_TOPMOST, 0, (size.height - 40) as i32, size.width as i32, 40, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
+                            let _ = SetWindowPos(hwnd, HWND_TOPMOST, 0, (size.height - 60) as i32, size.width as i32, 60, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
                         }
                     }
                     }
@@ -2399,6 +2552,9 @@ fn main() {
             get_open_windows,
             get_window_debug_snapshot,
             clear_icon_cache,
+            restore_shell_state,
+            get_window_thumbnail,
+            close_window,
             focus_window,
             get_virtual_desktop_status,
             switch_virtual_desktop
