@@ -763,6 +763,7 @@ struct DailyForecast {
     temp_min: f32,
     temp_max: f32,
     symbol: String,
+    humidity: f32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -818,6 +819,7 @@ async fn get_weather(lat: f64, lon: f64, place_name: String) -> Result<WeatherDe
     let mut d_min = 100.0;
     let mut d_max = -100.0;
     let mut d_symbol = String::new();
+    let mut d_humidity = 0.0; // Initialize humidity
 
     for entry in timeseries {
         let time = entry.get("time").and_then(|v| v.as_str()).unwrap_or("");
@@ -829,19 +831,32 @@ async fn get_weather(lat: f64, lon: f64, place_name: String) -> Result<WeatherDe
                     date: current_day.clone(), 
                     temp_min: d_min as f32, 
                     temp_max: d_max as f32, 
-                    symbol: d_symbol.clone() 
+                    symbol: d_symbol.clone(),
+                    humidity: d_humidity as f32, // Add humidity here
                 });
             }
             current_day = day.to_string();
             d_min = 100.0;
             d_max = -100.0;
             d_symbol = String::new();
+            d_humidity = 0.0; // Reset humidity for the new day
         }
 
         let details = entry.get("data").and_then(|d| d.get("instant")).and_then(|i| i.get("details")).ok_or("No details")?;
         let t = details.get("air_temperature").and_then(|v| v.as_f64()).unwrap_or(0.0);
         if t < d_min { d_min = t; }
         if t > d_max { d_max = t; }
+
+        // Extract humidity from next_6_hours.details.relative_humidity_12_hour or similar
+        // Note: yr.no API might not provide humidity for daily forecast directly in this format.
+        // We'll try to get it from a representative 'next_6_hours' entry.
+        if d_humidity == 0.0 { // Only try to get humidity once per day, or update if a better value is found
+            let next_6h = entry.get("data").and_then(|d| d.get("next_6_hours"));
+            d_humidity = next_6h.and_then(|n| n.get("details"))
+                                 .and_then(|d| d.get("relative_humidity_12_hour")) // Assuming this key exists
+                                 .and_then(|v| v.as_f64())
+                                 .unwrap_or(0.0) as f32;
+        }
 
         if d_symbol.is_empty() {
             let next_6h = entry.get("data").and_then(|d| d.get("next_6_hours"));
@@ -2173,35 +2188,6 @@ fn restore_shell_state(app: AppHandle) -> Result<(), String> {
     restore_shell_state_internal(&app)
 }
 
-fn register_bottom_app_bar(hwnd_v: HWND, width: u32, screen_height: u32) {
-    unsafe {
-        let current_style = GetWindowLongW(hwnd_v, GWL_STYLE);
-        let _ = SetWindowLongW(hwnd_v, GWL_STYLE, (current_style as u32 | WS_POPUP.0) as i32);
-
-        let current_ex_style = GetWindowLongW(hwnd_v, GWL_EXSTYLE);
-        let _ = SetWindowLongW(hwnd_v, GWL_EXSTYLE, (current_ex_style as u32 | WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0) as i32);
-
-        let mut abd = APPBARDATA {
-            cbSize: std::mem::size_of::<APPBARDATA>() as u32,
-            hWnd: hwnd_v,
-            uCallbackMessage: 0x0401,
-            uEdge: ABE_BOTTOM as u32,
-            rc: RECT { left: 0, top: (screen_height - 60) as i32, right: width as i32, bottom: screen_height as i32 },
-            lParam: windows::Win32::Foundation::LPARAM(0),
-        };
-
-        let _ = SHAppBarMessage(windows::Win32::UI::Shell::ABM_REMOVE, &mut abd);
-        SHAppBarMessage(ABM_NEW, &mut abd);
-        SHAppBarMessage(ABM_QUERYPOS, &mut abd);
-        abd.rc.top = (screen_height - 60) as i32;
-        abd.rc.bottom = screen_height as i32;
-        SHAppBarMessage(ABM_SETPOS, &mut abd);
-
-        // AppBar reserves 60px at screen bottom; window matches
-        let _ = SetWindowPos(hwnd_v, HWND_TOPMOST, 0, (screen_height - 60) as i32, width as i32, 60, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
-    }
-}
-
 // ── Main ────────────────────────────────────────────────────────────
 
 fn main() {
@@ -2319,68 +2305,6 @@ fn main() {
                     } else {
                         unsafe {
                             let _ = SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, size.width as i32, 32, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
-                        }
-                    }
-                    }
-                }
-                if let Some(window) = app.get_webview_window("taskbar-bottom") {
-                    // Height must be large enough for preview popups to render above the dock
-                    let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize { width: size.width, height: 60 }));
-                    let _ = window.set_shadow(false);
-                    let _ = window.set_skip_taskbar(true);
-                    
-                    if let Ok(hwnd_raw) = window.hwnd() {
-                        let hwnd = HWND(hwnd_raw.0);
-                        if initial_settings.reserve_screen_space {
-                            register_bottom_app_bar(hwnd, size.width, size.height);
-
-                            let w_clone = window.clone();
-                            let preview_flag = preview_active.clone();
-                            thread::spawn(move || {
-                                loop {
-                                if let Ok(Some(monitor)) = w_clone.primary_monitor() {
-                                    let width = monitor.size().width;
-                                    let height = monitor.size().height;
-                                    let hwnd = w_clone.hwnd().unwrap();
-                                    let hwnd_v = HWND(hwnd.0);
-                                    unsafe {
-                                        let mut abd = APPBARDATA {
-                                            cbSize: std::mem::size_of::<APPBARDATA>() as u32,
-                                            hWnd: hwnd_v,
-                                            uCallbackMessage: 0x0401,
-                                            uEdge: ABE_BOTTOM as u32,
-                                            rc: RECT { left: 0, top: (height - 60) as i32, right: width as i32, bottom: height as i32 },
-                                            lParam: windows::Win32::Foundation::LPARAM(0),
-                                        };
-                                        SHAppBarMessage(ABM_QUERYPOS, &mut abd);
-                                        abd.rc.top = (height - 60) as i32; abd.rc.bottom = height as i32;
-                                        SHAppBarMessage(ABM_SETPOS, &mut abd);
-                                        // Only reposition window if no preview popup is active
-                                        if !preview_flag.load(Ordering::Relaxed) {
-                                            let _ = SetWindowPos(hwnd_v, HWND_TOPMOST, 0, (height - 60) as i32, width as i32, 60, SWP_NOACTIVATE | SWP_FRAMECHANGED);
-                                        }
-
-                                        // Keep the reserved area honest if Explorer or display changes nudge it.
-                                        let mut new_work_area = RECT {
-                                            left: 0,
-                                            top: 32,
-                                            right: width as i32,
-                                            bottom: (height - 60) as i32,
-                                        };
-                                        SystemParametersInfoW(
-                                            SPI_SETWORKAREA,
-                                            0,
-                                            Some(&mut new_work_area as *mut _ as *mut _),
-                                            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
-                                        ).ok();
-                                    }
-                                }
-                                thread::sleep(Duration::from_secs(5));
-                            }
-                        });
-                    } else {
-                        unsafe {
-                            let _ = SetWindowPos(hwnd, HWND_TOPMOST, 0, (size.height - 60) as i32, size.width as i32, 60, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
                         }
                     }
                     }

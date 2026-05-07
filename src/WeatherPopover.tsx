@@ -12,6 +12,7 @@ interface DailyForecast {
   temp_min: number;
   temp_max: number;
   symbol: string;
+  humidity: number; // Added humidity
 }
 
 interface WeatherDetailed {
@@ -89,6 +90,9 @@ export function WeatherPopover({ data, onClose }: Props) {
             <div className="daily-temps">
               <span className="temp-max">{Math.round(d.temp_max)}°</span>
               <span className="temp-min">{Math.round(d.temp_min)}°</span>
+            </div>
+            <div className="daily-humidity">
+              <span className="humidity-value">{Math.round(d.humidity)}%</span>
             </div>
           </div>
         ))}

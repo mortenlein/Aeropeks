@@ -79,21 +79,6 @@
         "center": true,
         "skipTaskbar": true,
         "shadow": false
-      },
-      {
-        "label": "taskbar-bottom",
-        "title": "Aeropeks Taskbar",
-        "url": "/?window=taskbar-bottom",
-        "width": 1920,
-        "height": 60,
-        "decorations": false,
-        "transparent": true,
-        "alwaysOnTop": true,
-        "visible": true,
-        "x": 0,
-        "y": 0,
-        "center": false,
-        "skipTaskbar": true
       }
     ],
     "security": {
