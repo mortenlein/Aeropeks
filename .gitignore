@@ -26,6 +26,7 @@ src-tauri/remote/
 .env
 .env.*
 *.local
+metadata.json
 
 # Logs
 npm-debug.log*
