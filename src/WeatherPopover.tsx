@@ -1,28 +1,5 @@
 import { Cloud, Sun, CloudRain, CloudLightning, Snowflake, Wind, CloudSun, CloudDrizzle } from "lucide-react";
-
-interface HourlyForecast {
-  time: string;
-  temp: number;
-  symbol: string;
-  precip: number;
-}
-
-interface DailyForecast {
-  date: string;
-  temp_min: number;
-  temp_max: number;
-  symbol: string;
-  humidity: number; // Added humidity
-}
-
-interface WeatherDetailed {
-  temp: number;
-  symbol: string;
-  precip: number;
-  place_name: string;
-  hourly: HourlyForecast[];
-  daily: DailyForecast[];
-}
+import type { WeatherDetailed } from "./contracts";
 
 interface Props {
   data: WeatherDetailed;

@@ -71,7 +71,7 @@ const Launcher = () => {
   };
 
   return (
-    <div className="launcher-container" onKeyDown={handleKeyDown}>
+    <div className="launcher-container" data-tauri-drag-region onKeyDown={handleKeyDown}>
       <div className="launcher-input-wrapper">
         <Search className="search-icon" size={20} />
         <input

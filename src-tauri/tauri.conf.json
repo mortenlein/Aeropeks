@@ -30,8 +30,10 @@
         "label": "settings",
         "title": "Aeropeks Settings",
         "url": "/?window=settings",
-        "width": 640,
-        "height": 720,
+        "width": 920,
+        "height": 860,
+        "minWidth": 720,
+        "minHeight": 600,
         "decorations": true,
         "transparent": true,
         "resizable": true,
@@ -79,10 +81,52 @@
         "center": true,
         "skipTaskbar": true,
         "shadow": false
+      },
+      {
+        "label": "demo-weather",
+        "title": "Aeropeks Weather",
+        "url": "/?window=demo-weather",
+        "width": 440,
+        "height": 660,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "resizable": false,
+        "visible": false,
+        "skipTaskbar": true,
+        "shadow": false
+      },
+      {
+        "label": "demo-usage",
+        "title": "Aeropeks Usage",
+        "url": "/?window=demo-usage",
+        "width": 380,
+        "height": 360,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "resizable": false,
+        "visible": false,
+        "skipTaskbar": true,
+        "shadow": false
+      },
+      {
+        "label": "demo-projects",
+        "title": "Aeropeks Projects",
+        "url": "/?window=demo-projects",
+        "width": 420,
+        "height": 540,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "resizable": false,
+        "visible": false,
+        "skipTaskbar": true,
+        "shadow": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-src 'none'"
     }
   },
   "bundle": {

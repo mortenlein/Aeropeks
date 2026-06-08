@@ -1,186 +1,18 @@
-import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-
-interface TerminalShortcut {
-  id: string;
-  label: string;
-  cmd: string;
-  shortcut: string;
-}
-
-interface AppSettings {
-  plex_url: string;
-  plex_token: string;
-  accent_color: string;
-  terminal_shortcuts: TerminalShortcut[];
-  weather_location: string;
-  weather_lat: number | null;
-  weather_lon: number | null;
-  obs_websocket_url: string;
-  obs_websocket_password: string;
-  use_24h: boolean;
-  reserve_screen_space: boolean;
-  hide_native_taskbar: boolean;
-  debug_inspector: boolean;
-}
-
-interface DebugWindowInfo {
-  hwnd: number;
-  title: string;
-  app_name: string;
-  class_name: string;
-  process_path: string | null;
-  app_id: string | null;
-  relaunch_command: string | null;
-  relaunch_icon: string | null;
-  identity_key: string;
-  icon_source: string;
-  inclusion_reason: string;
-}
-
-interface LocationResult {
-  name: string;
-  lat: number;
-  lon: number;
-  country: string;
-  url_path: string;
-}
+import { invoke } from "@tauri-apps/api/core";
+import { useSettingsModel } from "./hooks/useSettingsModel";
 
 function Settings() {
-  const [plexUrl, setPlexUrl] = useState("");
-  const [plexToken, setPlexToken] = useState("");
-  const [accentColor, setAccentColor] = useState("#22c55e");
-  const [shortcuts, setShortcuts] = useState<TerminalShortcut[]>([]);
-  const [saved, setSaved] = useState(false);
-  const [use24h, setUse24h] = useState(true);
-
-  const [weatherLocation, setWeatherLocation] = useState("");
-  const [weatherLat, setWeatherLat] = useState<number | null>(null);
-  const [weatherLon, setWeatherLon] = useState<number | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<LocationResult[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-
-  const [obsUrl, setObsUrl] = useState("");
-  const [obsPassword, setObsPassword] = useState("");
-  const [reserveScreenSpace, setReserveScreenSpace] = useState(true);
-  const [hideNativeTaskbar, setHideNativeTaskbar] = useState(false);
-  const [debugInspector, setDebugInspector] = useState(false);
-  const [debugWindows, setDebugWindows] = useState<DebugWindowInfo[]>([]);
-  const [shellMessage, setShellMessage] = useState("");
-
-  useEffect(() => {
-    invoke<AppSettings>("get_settings").then((s) => {
-      setPlexUrl(s.plex_url || "");
-      setPlexToken(s.plex_token || "");
-      setAccentColor(s.accent_color || "#22c55e");
-      setShortcuts(s.terminal_shortcuts || []);
-      setWeatherLocation(s.weather_location || "");
-      setWeatherLat(s.weather_lat);
-      setWeatherLon(s.weather_lon);
-      setSearchQuery(s.weather_location || "");
-      setObsUrl(s.obs_websocket_url || "");
-      setObsPassword(s.obs_websocket_password || "");
-      setUse24h(s.use_24h !== false);
-      setReserveScreenSpace(s.reserve_screen_space !== false);
-      setHideNativeTaskbar(s.hide_native_taskbar === true);
-      setDebugInspector(s.debug_inspector === true);
-    });
-  }, []);
-
-  const handleSearch = async (q: string) => {
-    setSearchQuery(q);
-    if (q.length < 3) {
-      setSearchResults([]);
-      return;
-    }
-    setIsSearching(true);
-    try {
-      const results = await invoke<LocationResult[]>("search_locations", { query: q });
-      setSearchResults(results);
-    } catch (e) {
-      console.error("Search failed:", e);
-    } finally {
-      setIsSearching(false);
-    }
-  };
-
-  const selectLocation = (loc: LocationResult) => {
-    setWeatherLocation(loc.name);
-    setWeatherLat(loc.lat);
-    setWeatherLon(loc.lon);
-    setSearchQuery(loc.name);
-    setSearchResults([]);
-  };
-
-  const handleSave = async () => {
-    await invoke("save_settings", {
-      settings: {
-        plex_url: plexUrl,
-        plex_token: plexToken,
-        accent_color: accentColor,
-        terminal_shortcuts: shortcuts,
-        weather_location: weatherLocation,
-        weather_lat: weatherLat,
-        weather_lon: weatherLon,
-        obs_websocket_url: obsUrl,
-        obs_websocket_password: obsPassword,
-        use_24h: use24h,
-        reserve_screen_space: reserveScreenSpace,
-        hide_native_taskbar: hideNativeTaskbar,
-        debug_inspector: debugInspector,
-      },
-    });
-    // Re-register hotkeys
-    await invoke("register_hotkeys");
-    
-    // Live-apply the accent color
-    document.documentElement.style.setProperty("--accent", accentColor);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
-
-  const refreshDebugWindows = async () => {
-    try {
-      const snapshot = await invoke<DebugWindowInfo[]>("get_window_debug_snapshot");
-      setDebugWindows(snapshot);
-    } catch (e) {
-      console.error("Failed to load window debug snapshot", e);
-    }
-  };
-
-  const handleRestoreShell = async () => {
-    try {
-      await invoke("restore_shell_state");
-      setShellMessage("Windows taskbar and work area restored.");
-    } catch (e) {
-      setShellMessage(`Restore failed: ${String(e)}`);
-    }
-  };
-
-  const handleClearIconCache = async () => {
-    try {
-      await invoke("clear_icon_cache");
-      await refreshDebugWindows();
-      setShellMessage("Icon cache cleared. Aeropeks will rebuild icons as windows refresh.");
-    } catch (e) {
-      setShellMessage(`Icon cache clear failed: ${String(e)}`);
-    }
-  };
-
-  const addShortcut = () => {
-    const newId = `ssh-${Date.now()}`;
-    setShortcuts([...shortcuts, { id: newId, label: "New Shortcut", cmd: "echo Hello", shortcut: "Alt+Shift+T" }]);
-  };
-
-  const removeShortcut = (id: string) => {
-    setShortcuts(shortcuts.filter(s => s.id !== id));
-  };
-
-  const updateShortcut = (id: string, field: keyof TerminalShortcut, value: string) => {
-    setShortcuts(shortcuts.map(s => s.id === id ? { ...s, [field]: value } : s));
-  };
+  const {
+    accentColor, addShortcut, debugInspector, debugWindows,
+    githubToken, handleClearIconCache, handleRestoreShell, handleSave, handleSearch,
+    hideNativeTaskbar, isSearching, obsPassword, obsUrl, plexToken, plexUrl,
+    refreshDebugWindows, removeShortcut, reserveScreenSpace, saved, searchQuery,
+    searchResults, selectLocation, setAccentColor, setDebugInspector,
+    setGithubToken, setHideNativeTaskbar, setObsPassword, setObsUrl, setPlexToken, setPlexUrl,
+    setReserveScreenSpace, setUsageLimitsUrl, setUse24h, shellMessage, shortcuts, updateShortcut,
+    use24h, usageLimitsUrl, weatherLat, weatherLocation, weatherLon,
+  } = useSettingsModel();
 
   return (
     <div className="settings-container">
@@ -189,26 +21,27 @@ function Settings() {
 
       <div className="setting-section">
         <h4>Media Integration</h4>
-        <div className="setting-group">
-          <label>Plex Server URL</label>
-          <input
-            type="text"
-            value={plexUrl}
-            onChange={(e) => setPlexUrl(e.target.value)}
-            placeholder="http://192.168.1.100:32400"
-          />
-          <span className="setting-hint">The primary address of your Plex Media Server.</span>
-        </div>
-
-        <div className="setting-group">
-          <label>Plex Token</label>
-          <input
-            type="password"
-            value={plexToken}
-            onChange={(e) => setPlexToken(e.target.value)}
-            placeholder="Enter your Plex token"
-          />
-          <span className="setting-hint">Used for authentication and controlling playback.</span>
+        <div className="setting-row-2col">
+          <div className="setting-group">
+            <label>Plex Server URL</label>
+            <input
+              type="text"
+              value={plexUrl}
+              onChange={(e) => setPlexUrl(e.target.value)}
+              placeholder="http://192.168.1.100:32400"
+            />
+            <span className="setting-hint">Address of your Plex Media Server.</span>
+          </div>
+          <div className="setting-group">
+            <label>Plex Token</label>
+            <input
+              type="password"
+              value={plexToken}
+              onChange={(e) => setPlexToken(e.target.value)}
+              placeholder="Enter your Plex token"
+            />
+            <span className="setting-hint">Used for authentication and playback control.</span>
+          </div>
         </div>
       </div>
 
@@ -300,6 +133,29 @@ function Settings() {
           </span>
         </div>
 
+        <div className="setting-row-2col">
+          <div className="setting-group">
+            <label>GitHub Personal Access Token</label>
+            <input
+              type="password"
+              value={githubToken}
+              onChange={(e) => setGithubToken(e.target.value)}
+              placeholder="github_pat_..."
+            />
+            <span className="setting-hint">Powers the Projects view. Needs repository read access.</span>
+          </div>
+          <div className="setting-group">
+            <label>Usage Limits Service URL</label>
+            <input
+              type="text"
+              value={usageLimitsUrl}
+              onChange={(e) => setUsageLimitsUrl(e.target.value)}
+              placeholder="http://localhost:8765/api/v1/snapshot"
+            />
+            <span className="setting-hint">Local AI usage tracking endpoint. Leave blank to disable.</span>
+          </div>
+        </div>
+
         <div className="setting-group">
           <label>OBS Studio WebSocket</label>
           <div className="color-row" style={{ marginTop: 0 }}>
@@ -355,6 +211,7 @@ function Settings() {
         <div className="shell-actions">
           <button onClick={handleRestoreShell}>Restore Windows Shell</button>
           <button onClick={handleClearIconCache}>Clear Icon Cache</button>
+          <button onClick={() => invoke("open_demo_mode")}>Screenshot Mode (closes this window)</button>
         </div>
         {shellMessage && <span className="setting-hint">{shellMessage}</span>}
 
@@ -421,42 +278,43 @@ function Settings() {
 
       <div className="setting-section">
         <h4>Personalization</h4>
-        <div className="setting-group">
-          <label>Theme Accent Color</label>
-          <div className="color-row" style={{ marginTop: 0 }}>
-            <input
-              type="color"
-              value={accentColor}
-              onChange={(e) => {
-                setAccentColor(e.target.value);
-                document.documentElement.style.setProperty("--accent", e.target.value);
-              }}
-              className="color-picker"
-            />
-            <span className="setting-hint" style={{ fontWeight: 600 }}>{accentColor.toUpperCase()}</span>
+        <div className="setting-row-2col">
+          <div className="setting-group">
+            <label>Theme Accent Color</label>
+            <div className="color-row" style={{ marginTop: 0 }}>
+              <input
+                type="color"
+                value={accentColor}
+                onChange={(e) => {
+                  setAccentColor(e.target.value);
+                  document.documentElement.style.setProperty("--accent", e.target.value);
+                }}
+                className="color-picker"
+              />
+              <span className="setting-hint" style={{ fontWeight: 600 }}>{accentColor.toUpperCase()}</span>
+            </div>
+            <span className="setting-hint">Used for highlights and active indicators across the app.</span>
           </div>
-          <span className="setting-hint">This color will be used for high-visibility highlights across the app.</span>
-        </div>
-
-        <div className="setting-group">
-          <label>Clock Format</label>
-          <div className="color-row" style={{ marginTop: 0 }}>
-             <button 
-               className={use24h ? "primary" : ""} 
-               onClick={() => setUse24h(true)}
-               style={{ flex: 1, padding: "8px" }}
-             >
-               24-Hour
-             </button>
-             <button 
-               className={!use24h ? "primary" : ""} 
-               onClick={() => setUse24h(false)}
-               style={{ flex: 1, padding: "8px" }}
-             >
-               12-Hour
-             </button>
+          <div className="setting-group">
+            <label>Clock Format</label>
+            <div className="color-row" style={{ marginTop: 0 }}>
+              <button
+                className={use24h ? "primary" : ""}
+                onClick={() => setUse24h(true)}
+                style={{ flex: 1, padding: "8px" }}
+              >
+                24-Hour
+              </button>
+              <button
+                className={!use24h ? "primary" : ""}
+                onClick={() => setUse24h(false)}
+                style={{ flex: 1, padding: "8px" }}
+              >
+                12-Hour
+              </button>
+            </div>
+            <span className="setting-hint">HH:MM (24h) or HH:MM AM/PM (12h).</span>
           </div>
-          <span className="setting-hint">Choose between HH:MM (24h) or HH:MM AM/PM (12h) formats.</span>
         </div>
       </div>
 

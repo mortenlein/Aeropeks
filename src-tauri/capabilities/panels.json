@@ -1,0 +1,6 @@
+{
+  "identifier": "panels",
+  "description": "Core APIs available to auxiliary panels",
+  "windows": ["expanded-player", "terminal-panel", "launcher-panel", "demo-weather", "demo-usage", "demo-projects"],
+  "permissions": ["core:default", "core:window:allow-start-dragging"]
+}

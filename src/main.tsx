@@ -1,48 +1,54 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense } from "react";
 import ReactDOM from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import App from "./App";
-import Settings from "./Settings";
-import ExpandedPlayer from "./ExpandedPlayer";
-import Terminal from "./Terminal";
-import Launcher from "./Launcher";
+import { normalizeWindowType } from "./window-routing";
 import "./index.css";
 
-function Root() {
-  const [windowType, setWindowType] = useState<string | null>(null);
+const App = lazy(() => import("./App"));
+const Settings = lazy(() => import("./Settings"));
+const ExpandedPlayer = lazy(() => import("./ExpandedPlayer"));
+const Terminal = lazy(() => import("./Terminal"));
+const Launcher = lazy(() => import("./Launcher"));
+const DemoWeather = lazy(() =>
+  import("./DemoPopup").then((m) => ({ default: m.DemoWeather })),
+);
+const DemoUsage = lazy(() =>
+  import("./DemoPopup").then((m) => ({ default: m.DemoUsage })),
+);
+const DemoProjects = lazy(() =>
+  import("./DemoPopup").then((m) => ({ default: m.DemoProjects })),
+);
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const type = params.get("window") || getCurrentWindow().label;
-    console.log("Window Type identified as:", type);
-    setWindowType(type);
-  }, []);
-
-  // Show nothing while identifying to prevent ghost layouts
-  if (!windowType) return null;
-
-  if (windowType === "settings") {
-    return <Settings />;
-  }
-
-  if (windowType === "expanded-player") {
-    return <ExpandedPlayer />;
-  }
-
-  if (windowType === "terminal-panel") {
-    return <Terminal />;
-  }
-  
-  if (windowType === "launcher-panel") {
-    return <Launcher />;
-  }
-
-  // Only render App for the 'main' window explicitly
-  if (windowType === "main" || windowType === "aeropeks") {
-    return <App />;
-  }
-
-  return null;
+function resolveWindowType() {
+  const requested = new URLSearchParams(window.location.search).get("window");
+  return normalizeWindowType(requested || getCurrentWindow().label);
 }
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(<Root />);
+function Root() {
+  switch (resolveWindowType()) {
+    case "main":
+      return <App />;
+    case "settings":
+      return <Settings />;
+    case "expanded-player":
+      return <ExpandedPlayer />;
+    case "terminal-panel":
+      return <Terminal />;
+    case "launcher-panel":
+      return <Launcher />;
+    case "demo-weather":
+      return <DemoWeather />;
+    case "demo-usage":
+      return <DemoUsage />;
+    case "demo-projects":
+      return <DemoProjects />;
+    default:
+      return null;
+  }
+}
+
+ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+  <Suspense fallback={null}>
+    <Root />
+  </Suspense>,
+);

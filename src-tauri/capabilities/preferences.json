@@ -1,0 +1,6 @@
+{
+  "identifier": "preferences",
+  "description": "Core APIs available to settings",
+  "windows": ["settings"],
+  "permissions": ["core:default"]
+}

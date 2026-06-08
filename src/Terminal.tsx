@@ -12,7 +12,7 @@ function Terminal() {
   const unlistenRefs = useRef<(() => void)[]>([]);
   const ptyListenersRef = useRef<(() => void)[]>([]);
 
-  const setupPty = async (args: string[] | null = null) => {
+  const setupPty = async (command: string | null = null) => {
     const term = xtermRef.current;
     if (!term) return;
 
@@ -46,7 +46,7 @@ function Terminal() {
       ptyListenersRef.current.push(unExit);
 
       // 4. Start the backend PTY
-      await invoke("start_pty", { rows: term.rows, cols: term.cols, args });
+      await invoke("start_pty", { rows: term.rows, cols: term.cols, command });
     } catch (e) {
       term.write(`\r\n\x1b[31mSetup Error: ${e}\x1b[0m\r\n`);
     }
@@ -98,14 +98,14 @@ function Terminal() {
     // Persistent Session Listener
     listen<{ data: string }>("start-session", (event) => {
       try {
-        const args = JSON.parse(event.payload.data);
+        const command = JSON.parse(event.payload.data) as string;
         term.reset();
-        if (args.length > 0) {
-          term.write(`\x1b[32mStarting session: ${args.join(" ")}\x1b[0m\r\n`);
+        if (command) {
+          term.write(`\x1b[32mStarting session: ${command}\x1b[0m\r\n`);
         } else {
           term.write(`\x1b[32mStarting fresh local shell...\x1b[0m\r\n`);
         }
-        setupPty(args);
+        setupPty(command);
       } catch (e) {
         console.error("Failed to parse session args:", e);
       }

@@ -3,19 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { Play, Pause, SkipBack, SkipForward, Music, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-
-interface MediaInfo {
-  title: string;
-  artist: string;
-  album: string;
-  thumb: string;
-  duration_ms: number;
-  view_offset_ms: number;
-  is_playing: boolean;
-  session_id: string;
-  machine_id: string;
-  address: string;
-}
+import type { MediaInfo } from "./contracts";
 
 function formatMs(ms: number): string {
   const totalSec = Math.floor(ms / 1000);
@@ -52,12 +40,12 @@ function ExpandedPlayer() {
   };
 
   useEffect(() => {
-    invoke<MediaInfo>("get_media_info")
+    invoke<MediaInfo | null>("get_media_info_unified")
       .then((info) => {
         setMediaInfo(info);
-        setViewOffset(info.view_offset_ms);
+        setViewOffset(info?.view_offset_ms ?? 0);
         startTicker(info);
-        loadAlbumArt(info.thumb);
+        loadAlbumArt(info?.thumbnail ?? "");
       })
       .catch(() => {});
 
@@ -67,7 +55,7 @@ function ExpandedPlayer() {
       if (info) {
         setViewOffset(info.view_offset_ms);
         startTicker(info);
-        loadAlbumArt(info.thumb);
+        loadAlbumArt(info.thumbnail ?? "");
       } else {
         if (tickRef.current) clearInterval(tickRef.current);
       }
@@ -79,18 +67,12 @@ function ExpandedPlayer() {
     };
   }, []);
 
-  const handlePlexControl = async (command: string) => {
-    if (!mediaInfo?.session_id || !mediaInfo?.machine_id) return;
+  const handleMediaControl = async (action: string) => {
+    if (!mediaInfo) return;
     try {
-      await invoke("plex_control", {
-        command,
-        sessionId: mediaInfo.session_id,
-        machineId: mediaInfo.machine_id,
-        address: mediaInfo.address,
-      });
-      // Optimistically update play state so the UI doesn't lag
-      if (command === "play" || command === "pause") {
-        const nowPlaying = command === "play";
+      await invoke("media_control_unified", { action });
+      if (action === "play_pause") {
+        const nowPlaying = !mediaInfo.is_playing;
         const updated = { ...mediaInfo, is_playing: nowPlaying };
         setMediaInfo(updated);
         startTicker(updated);
@@ -106,6 +88,7 @@ function ExpandedPlayer() {
   return (
     <div className="expanded-outer" onContextMenu={(e) => e.preventDefault()}>
       <div className="expanded-player">
+        <div className="player-drag-handle" data-tauri-drag-region />
         <button className="close-btn" onClick={() => getCurrentWindow().hide()}>
           <X size={14} />
         </button>
@@ -140,12 +123,12 @@ function ExpandedPlayer() {
           </div>
 
           <div className="player-controls-expanded">
-            <button className="ctrl-btn" onClick={() => handlePlexControl("prev")}>
+            <button className="ctrl-btn" onClick={() => handleMediaControl("previous")}>
               <SkipBack size={20} fill="currentColor" />
             </button>
             <button
               className="play-btn"
-              onClick={() => handlePlexControl(mediaInfo?.is_playing ? "pause" : "play")}
+              onClick={() => handleMediaControl("play_pause")}
             >
               {mediaInfo?.is_playing ? (
                 <Pause size={24} fill="white" />
@@ -153,7 +136,7 @@ function ExpandedPlayer() {
                 <Play size={24} fill="white" />
               )}
             </button>
-            <button className="ctrl-btn" onClick={() => handlePlexControl("next")}>
+            <button className="ctrl-btn" onClick={() => handleMediaControl("next")}>
               <SkipForward size={20} fill="currentColor" />
             </button>
           </div>

@@ -1,94 +1,47 @@
 import { useEffect, useState, useRef } from "react";
-import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { Music, Volume2, Clock, Play, Pause, SkipBack, SkipForward, Terminal as TerminalIcon, Bluetooth, Battery, Mic, MicOff, Video, Cloud, Power, Settings as SettingsIcon, Shield } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
+import { Music, Volume2, Clock, Play, Pause, SkipBack, SkipForward, Terminal as TerminalIcon, Bluetooth, Battery, Mic, MicOff, Video, Cloud, Power, Settings as SettingsIcon, Shield, FolderGit2 } from "lucide-react";
 import { WeatherPopover } from "./WeatherPopover";
-
-interface TerminalShortcut {
-  id: string;
-  label: string;
-  cmd: string;
-}
-
-interface AppSettings {
-  plex_url: string;
-  plex_token: string;
-  accent_color: string;
-  terminal_shortcuts: TerminalShortcut[];
-  weather_location: string;
-  weather_lat: number | null;
-  weather_lon: number | null;
-  use_24h: boolean;
-}
-
-interface MediaInfo {
-  title: string;
-  artist: string;
-  album: string;
-  is_playing: boolean;
-  thumbnail?: string;
-  duration_ms: number;
-  view_offset_ms: number;
-  source: string;
-  session_id?: string;
-  machine_id?: string;
-  address?: string;
-}
-
-interface BluetoothStatus {
-  connected: boolean;
-  devices: string[];
-}
-
-interface BatteryStatus {
-  percentage: number;
-  is_charging: boolean;
-  has_battery: boolean;
-}
-
-interface HourlyForecast {
-  time: string;
-  temp: number;
-  symbol: string;
-  precip: number;
-}
-
-interface DailyForecast {
-  date: string;
-  temp_min: number;
-  temp_max: number;
-  symbol: string;
-}
-
-interface WeatherDetailed {
-  temp: number;
-  symbol: string;
-  precip: number;
-  place_name: string;
-  hourly: HourlyForecast[];
-  daily: DailyForecast[];
-}
-
-interface ObsStatus {
-  is_streaming: boolean;
-  is_recording: boolean;
-}
+import {
+  lowestRemaining,
+  UsageLimitsPopover,
+  UsageLimitsSummary,
+} from "./UsageLimitsPopover";
+import { useMenuBarModel } from "./hooks/useMenuBarModel";
+import { ProjectsPopover } from "./ProjectsPopover";
 
 function App() {
-  const [windowTitle, setWindowTitle] = useState("Aeropeks");
-  const [mediaInfo, setMediaInfo] = useState<MediaInfo | null>(null);
-  const [volume, setVolume] = useState(0.5);
+  const {
+    battery,
+    bluetooth,
+    changeVolume,
+    controlMedia,
+    mediaInfo,
+    micMuted,
+    obsStatus,
+    privacyMode,
+    projects,
+    projectsRefreshing,
+    refreshProjects,
+    settings,
+    time,
+    toggleMic,
+    togglePrivacy,
+    usageLimits,
+    volume,
+    weather,
+    windowTitle,
+  } = useMenuBarModel();
   const [showVolume, setShowVolume] = useState(false);
-  const [battery, setBattery] = useState<BatteryStatus | null>(null);
-  const [bluetooth, setBluetooth] = useState<BluetoothStatus>({ connected: false, devices: [] });
   const [showBluetoothMenu, setShowBluetoothMenu] = useState(false);
   const bluetoothRef = useRef<HTMLDivElement>(null);
-  const [micMuted, setMicMuted] = useState(false);
-  const [privacyMode, setPrivacyMode] = useState(false);
-  const [obsStatus, setObsStatus] = useState<ObsStatus | null>(null);
-  const [weather, setWeather] = useState<WeatherDetailed | null>(null);
   const [showWeather, setShowWeather] = useState(false);
   const weatherRef = useRef<HTMLDivElement>(null);
+  const [showUsageLimits, setShowUsageLimits] = useState(false);
+  const usageLimitsRef = useRef<HTMLDivElement>(null);
+  const [showProjects, setShowProjects] = useState(false);
+  const projectsRef = useRef<HTMLDivElement>(null);
   
   const [showPowerMenu, setShowPowerMenu] = useState(false);
   const powerMenuRef = useRef<HTMLDivElement>(null);
@@ -96,124 +49,21 @@ function App() {
   const [showTerminalMenu, setShowTerminalMenu] = useState(false);
   const [terminalMenuPos, setTerminalMenuPos] = useState({ x: 0, y: 0 });
   const terminalMenuRef = useRef<HTMLDivElement>(null);
-  const [settings, setSettings] = useState<AppSettings | null>(null);
-
-  const [time, setTime] = useState("");
-  const [use24h, setUse24h] = useState(true);
-
   const volumeRef = useRef<HTMLDivElement>(null);
-
-  const formatTime = (date: Date, is24h: boolean) => {
-    return date.toLocaleTimeString(undefined, { 
-      hour: '2-digit', 
-      minute: '2-digit',
-      hour12: !is24h
-    });
-  };
-
-  const fetchMedia = async () => {
-    try {
-      const info = await invoke<MediaInfo | null>("get_media_info_unified");
-      setMediaInfo(info);
-    } catch (e) {
-      setMediaInfo(null);
-    }
-  };
+  const [demoMode, setDemoMode] = useState(false);
 
   const handleMediaControl = async (action: string) => {
     try {
-      await invoke("media_control_unified", { action, media: mediaInfo });
+      await controlMedia(action as "previous" | "play_pause" | "next");
     } catch (e) {
       console.error("Media control failed", e);
     }
   };
 
-  const fetchStatuses = async () => {
-    try {
-      setBattery(await invoke<BatteryStatus>("get_battery_status"));
-      setBluetooth(await invoke<BluetoothStatus>("get_bluetooth_status"));
-      setMicMuted(await invoke<boolean>("get_mic_status"));
-      setPrivacyMode(await invoke<boolean>("get_privacy_status"));
-      setObsStatus(await invoke<ObsStatus>("get_obs_status"));
-    } catch (e) {}
-  };
-
-  const fetchWeather = async (settings?: AppSettings) => {
-    try {
-      const s = settings || await invoke<AppSettings>("get_settings");
-      if (s.weather_lat && s.weather_lon) {
-        console.log("Refreshing weather for:", s.weather_location);
-        const w = await invoke<WeatherDetailed>("get_weather", { 
-          lat: s.weather_lat, 
-          lon: s.weather_lon,
-          placeName: s.weather_location || "Unknown"
-        });
-        setWeather(w);
-      }
-    } catch (e) {
-      console.error("Weather fetch failed:", e);
-    }
-  };
-
-  useEffect(() => {
-    invoke<AppSettings>("get_settings").then((s) => {
-      setSettings(s);
-      if (s.accent_color) {
-        document.documentElement.style.setProperty("--accent", s.accent_color);
-      }
-      setUse24h(s.use_24h !== false);
-      setTime(formatTime(new Date(), s.use_24h !== false));
-    }).catch(() => {});
-    invoke<number>("get_volume").then(setVolume);
-    fetchMedia();
-    fetchStatuses();
-    fetchWeather();
-
-    const pollInterval = setInterval(fetchMedia, 30000);
-    const statusInterval = setInterval(fetchStatuses, 5000);
-    const weatherInterval = setInterval(fetchWeather, 600000); // 10 mins
-    const timeInterval = setInterval(() => {
-      setTime(formatTime(new Date(), use24h));
-    }, 10000);
-
-    const unlistenWindow = listen<string>("window-change", (event) => {
-      setWindowTitle(event.payload || "Desktop");
-    });
-
-    const unlistenMedia = listen<MediaInfo | null>("media-change", (event) => {
-      if (event.payload) {
-        setMediaInfo(event.payload);
-      } else {
-        setMediaInfo(null);
-      }
-    });
-
-    const unlistenSettings = listen<AppSettings>("settings-changed", (event) => {
-      const s = event.payload;
-      setSettings(s);
-      setUse24h(s.use_24h !== false);
-      if (s.accent_color) {
-        document.documentElement.style.setProperty("--accent", s.accent_color);
-      }
-      // Force weather and media refresh on settings change
-      fetchWeather(s);
-      fetchMedia();
-    });
-
-    return () => {
-      clearInterval(pollInterval);
-      clearInterval(statusInterval);
-      clearInterval(weatherInterval);
-      clearInterval(timeInterval);
-      unlistenWindow.then(f => f());
-      unlistenMedia.then(f => f());
-      unlistenSettings.then(f => f());
-    };
-  }, []);
-
-  // Click-away listener
+  // Click-away listener — suspended in demo/screenshot mode
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
+      if (demoMode) return;
       if (volumeRef.current && !volumeRef.current.contains(event.target as Node)) {
         setShowVolume(false);
       }
@@ -223,6 +73,12 @@ function App() {
       if (weatherRef.current && !weatherRef.current.contains(event.target as Node)) {
         setShowWeather(false);
       }
+      if (usageLimitsRef.current && !usageLimitsRef.current.contains(event.target as Node)) {
+        setShowUsageLimits(false);
+      }
+      if (projectsRef.current && !projectsRef.current.contains(event.target as Node)) {
+        setShowProjects(false);
+      }
       if (terminalMenuRef.current && !terminalMenuRef.current.contains(event.target as Node)) {
         setShowTerminalMenu(false);
       }
@@ -231,7 +87,7 @@ function App() {
       }
     };
 
-    if (showVolume || showPowerMenu || showWeather || showTerminalMenu || showBluetoothMenu) {
+    if (showVolume || showPowerMenu || showWeather || showUsageLimits || showProjects || showTerminalMenu || showBluetoothMenu) {
       document.addEventListener("mousedown", handleClickOutside);
     } else {
       document.removeEventListener("mousedown", handleClickOutside);
@@ -240,27 +96,55 @@ function App() {
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [showVolume, showPowerMenu, showWeather]);
+  }, [
+    demoMode,
+    showBluetoothMenu,
+    showPowerMenu,
+    showProjects,
+    showTerminalMenu,
+    showUsageLimits,
+    showVolume,
+    showWeather,
+  ]);
 
   useEffect(() => {
     // Dynamic window expansion for dropdowns/popovers
-    if (showVolume || showPowerMenu || showWeather || showTerminalMenu || showBluetoothMenu) {
+    if (showVolume || showPowerMenu || showWeather || showUsageLimits || showProjects || showTerminalMenu || showBluetoothMenu) {
        invoke("set_window_height", { height: 760 }).catch(console.error);
     } else {
        invoke("set_window_height", { height: 32 }).catch(console.error);
     }
-  }, [showVolume, showPowerMenu, showWeather, showTerminalMenu, showBluetoothMenu]);
+  }, [showVolume, showPowerMenu, showWeather, showUsageLimits, showProjects, showTerminalMenu, showBluetoothMenu]);
+
+  useEffect(() => {
+    const unlistenEnter = listen("demo-mode", () => {
+      setDemoMode(true);
+      setShowPowerMenu(true);
+      setShowVolume(true);
+      setShowBluetoothMenu(true);
+    });
+    const unlistenExit = listen("demo-mode-exit", () => {
+      setDemoMode(false);
+      setShowPowerMenu(false);
+      setShowVolume(false);
+      setShowBluetoothMenu(false);
+    });
+    return () => {
+      unlistenEnter.then((f) => f());
+      unlistenExit.then((f) => f());
+    };
+  }, []);
 
   const handleVolumeChange = (newVol: number) => {
-    setVolume(newVol);
-    invoke("set_volume", { volume: newVol });
+    changeVolume(newVol).catch((error) =>
+      console.error("Volume change failed", error),
+    );
   };
 
 
   const handleMicToggle = async () => {
     try {
-      const isMuted = await invoke<boolean>("toggle_mic_mute");
-      setMicMuted(isMuted);
+      await toggleMic();
     } catch (e) {
       console.error("Mic toggle failed", e);
     }
@@ -268,11 +152,7 @@ function App() {
 
   const handlePrivacyToggle = async () => {
     try {
-      const nextState = !privacyMode;
-      await invoke("set_privacy_mode", { enabled: nextState });
-      setPrivacyMode(nextState);
-      // Privacy mode also affects mic state in our backend
-      setMicMuted(nextState ? true : await invoke<boolean>("get_mic_status"));
+      await togglePrivacy();
     } catch (e) {
       console.error("Privacy mode toggle failed", e);
     }
@@ -334,6 +214,54 @@ function App() {
                     onClose={() => setShowWeather(false)} 
                   />
                 </div>
+              )}
+            </div>
+          )}
+
+          {usageLimits && lowestRemaining(usageLimits) !== null && (
+            <div
+              className={`status-item usage-limits-item ${
+                (lowestRemaining(usageLimits) ?? 100) <= 20 ? "usage-critical" : ""
+              }`}
+              ref={usageLimitsRef}
+              title="AI usage limits"
+              onClick={() => setShowUsageLimits(!showUsageLimits)}
+            >
+              <UsageLimitsSummary snapshot={usageLimits} />
+              {showUsageLimits && (
+                <UsageLimitsPopover snapshot={usageLimits} />
+              )}
+            </div>
+          )}
+
+          {projects && (
+            <div
+              className="status-item projects-item"
+              ref={projectsRef}
+              title={`${projects.attentionCount} projects need attention`}
+              onClick={() => setShowProjects(!showProjects)}
+            >
+              <FolderGit2 size={15} />
+              <span
+                className={
+                  projects.averageHealth >= 80
+                    ? "project-score-ok"
+                    : projects.averageHealth >= 60
+                      ? "project-score-warn"
+                      : "project-score-bad"
+                }
+              >
+                {projects.averageHealth}
+              </span>
+              {projects.attentionCount > 0 && (
+                <small>{projects.attentionCount}</small>
+              )}
+              {showProjects && (
+                <ProjectsPopover
+                  snapshot={projects}
+                  refreshing={projectsRefreshing}
+                  onRefresh={() => refreshProjects().catch(console.error)}
+                />
               )}
             </div>
           )}
@@ -452,9 +380,8 @@ function App() {
                             onClick={async () => {
                                 setShowTerminalMenu(false);
                                 // Logic to start session (copied from backend command implementation)
-                                const args = s.cmd.split(/\s+/);
                                 await invoke("toggle_terminal_panel"); // Ensure open
-                                await invoke("start_pty", { rows: 24, cols: 80, args }); // Start session
+                                await invoke("start_pty", { rows: 24, cols: 80, command: s.cmd });
                             }}
                         >
                             <span>{s.label}</span>
