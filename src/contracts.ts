@@ -21,6 +21,54 @@ export interface AppSettings {
   reserve_screen_space: boolean;
   hide_native_taskbar: boolean;
   debug_inspector: boolean;
+  dreame_username: string;
+  dreame_password: string;
+  dreame_device_id: string;
+  homeassistant_url: string;
+  homeassistant_token: string;
+  ha_calendar_entity_id: string;
+}
+
+export interface VacuumStatus {
+  state: string;
+  battery: number;
+  charging: boolean;
+  cleaning: boolean;
+  cleaning_progress: number;
+  status: string;
+  selected_map: string;
+}
+
+export interface MowerStatus {
+  state: string;
+  state_label: string;
+  firmware: string;
+  cleaning_count: number;
+  total_area_m2: number;
+  total_time_min: number;
+  dnd: boolean;
+  zone_id: string;
+  zone_state: string;
+  has_update: boolean;
+}
+
+export interface PhoneStatus {
+  battery: number;
+  charging: boolean;
+  battery_state: string;
+  charge_time_min: number;
+  at_home: boolean;
+  wifi_ssid: string;
+  activity: string;
+}
+
+export interface CalendarEvent {
+  summary: string;
+  start: string;
+  end: string;
+  all_day: boolean;
+  description: string;
+  location: string;
 }
 
 export interface MediaInfo {

@@ -3,9 +3,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
   AppSettings,
+  CalendarEvent,
   LimitsSnapshot,
   MediaInfo,
+  MowerStatus,
+  PhoneStatus,
   ProjectsSnapshot,
+  VacuumStatus,
   WeatherDetailed,
 } from "../contracts";
 
@@ -48,6 +52,10 @@ export function useMenuBarModel() {
   const [usageLimits, setUsageLimits] = useState<LimitsSnapshot | null>(null);
   const [projects, setProjects] = useState<ProjectsSnapshot | null>(null);
   const [projectsRefreshing, setProjectsRefreshing] = useState(false);
+  const [mower, setMower] = useState<MowerStatus | null>(null);
+  const [vacuum, setVacuum] = useState<VacuumStatus | null>(null);
+  const [phone, setPhone] = useState<PhoneStatus | null>(null);
+  const [calendar, setCalendar] = useState<CalendarEvent[] | null>(null);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [use24h, setUse24h] = useState(true);
   const [time, setTime] = useState(() => formatTime(new Date(), true));
@@ -106,6 +114,25 @@ export function useMenuBarModel() {
     }
   }, []);
 
+  const fetchMower = useCallback(async () => {
+    setMower(await invoke<MowerStatus | null>("get_mower_status"));
+  }, []);
+
+  const fetchVacuum = useCallback(async () => {
+    setVacuum(await invoke<VacuumStatus | null>("get_ha_vacuum_status"));
+  }, []);
+
+  const fetchPhone = useCallback(async () => {
+    setPhone(await invoke<PhoneStatus | null>("get_ha_phone_status"));
+  }, []);
+
+  const fetchCalendar = useCallback(async () => {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7).toISOString();
+    setCalendar(await invoke<CalendarEvent[] | null>("get_calendar_events", { start, end }));
+  }, []);
+
   useEffect(() => {
     let disposed = false;
     const report = (operation: string, error: unknown) =>
@@ -130,6 +157,10 @@ export function useMenuBarModel() {
     fetchWeather().catch((error) => report("load weather", error));
     fetchUsageLimits().catch((error) => report("load usage limits", error));
     fetchProjects().catch((error) => report("load projects", error));
+    fetchMower().catch((error) => report("load mower", error));
+    fetchVacuum().catch((error) => report("load vacuum", error));
+    fetchPhone().catch((error) => report("load phone", error));
+    fetchCalendar().catch((error) => report("load calendar", error));
 
     const statusInterval = window.setInterval(
       () => fetchStatuses().catch((error) => report("refresh statuses", error)),
@@ -148,6 +179,22 @@ export function useMenuBarModel() {
     );
     const projectsInterval = window.setInterval(
       () => fetchProjects().catch((error) => report("refresh projects", error)),
+      300000,
+    );
+    const mowerInterval = window.setInterval(
+      () => fetchMower().catch((error) => report("refresh mower", error)),
+      60000,
+    );
+    const vacuumInterval = window.setInterval(
+      () => fetchVacuum().catch((error) => report("refresh vacuum", error)),
+      30000,
+    );
+    const phoneInterval = window.setInterval(
+      () => fetchPhone().catch((error) => report("refresh phone", error)),
+      60000,
+    );
+    const calendarInterval = window.setInterval(
+      () => fetchCalendar().catch((error) => report("refresh calendar", error)),
       300000,
     );
     const unlisteners = [
@@ -179,11 +226,15 @@ export function useMenuBarModel() {
       window.clearInterval(weatherInterval);
       window.clearInterval(usageLimitsInterval);
       window.clearInterval(projectsInterval);
+      window.clearInterval(mowerInterval);
+      window.clearInterval(vacuumInterval);
+      window.clearInterval(phoneInterval);
+      window.clearInterval(calendarInterval);
       Promise.all(unlisteners).then((callbacks) =>
         callbacks.forEach((unlisten) => unlisten()),
       );
     };
-  }, [fetchMedia, fetchProjects, fetchStatuses, fetchUsageLimits, fetchWeather]);
+  }, [fetchCalendar, fetchMedia, fetchMower, fetchPhone, fetchProjects, fetchStatuses, fetchUsageLimits, fetchVacuum, fetchWeather]);
 
   useEffect(() => {
     setTime(formatTime(new Date(), use24h));
@@ -217,10 +268,14 @@ export function useMenuBarModel() {
   return {
     battery,
     bluetooth,
+    calendar,
     changeVolume,
     controlMedia,
     mediaInfo,
     micMuted,
+    mower,
+    phone,
+    vacuum,
     obsStatus,
     privacyMode,
     projects,

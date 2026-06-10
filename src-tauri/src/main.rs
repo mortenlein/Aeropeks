@@ -1,6 +1,7 @@
 // Aeropeks v0.1.0 - Terminal Fix Build
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod dreame;
 mod integrations;
 mod launcher;
 mod media;
@@ -1284,6 +1285,362 @@ mod native_windows {
     }
 }
 
+#[derive(Serialize, Clone)]
+struct VacuumStatus {
+    state: String,
+    battery: u8,
+    charging: bool,
+    cleaning: bool,
+    cleaning_progress: u8,
+    status: String,
+    selected_map: String,
+}
+
+async fn ha_fetch_state(client: &reqwest::Client, base: &str, auth: &str, entity: &str) -> String {
+    #[derive(serde::Deserialize)]
+    struct Resp { state: String }
+    (async {
+        Ok::<_, reqwest::Error>(
+            client
+                .get(format!("{base}/api/states/{entity}"))
+                .header("Authorization", auth)
+                .send()
+                .await?
+                .json::<Resp>()
+                .await?
+                .state
+        )
+    })
+    .await
+    .unwrap_or_default()
+}
+
+#[tauri::command]
+async fn get_ha_vacuum_status(
+    window: Window,
+    state: tauri::State<'_, SharedSettings>,
+) -> Result<Option<VacuumStatus>, String> {
+    security::require_window(&window, &["main"])?;
+
+    let (url, token) = {
+        let s = state.lock().map_err(|e| e.to_string())?;
+        (s.homeassistant_url.clone(), s.homeassistant_token.clone())
+    };
+
+    if url.is_empty() || token.is_empty() {
+        return Ok(None);
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let base = url.trim_end_matches('/');
+    let auth = format!("Bearer {token}");
+
+    let (vac, bat, stat, chg, cln, prg, map) = tokio::join!(
+        ha_fetch_state(&client, base, &auth, "vacuum.roberto"),
+        ha_fetch_state(&client, base, &auth, "sensor.roberto_battery"),
+        ha_fetch_state(&client, base, &auth, "sensor.roberto_status"),
+        ha_fetch_state(&client, base, &auth, "binary_sensor.roberto_charging"),
+        ha_fetch_state(&client, base, &auth, "binary_sensor.roberto_cleaning"),
+        ha_fetch_state(&client, base, &auth, "sensor.roberto_cleaning_progress"),
+        ha_fetch_state(&client, base, &auth, "select.roberto_selected_map"),
+    );
+
+    Ok(Some(VacuumStatus {
+        state: vac,
+        battery: bat.parse().unwrap_or(0),
+        charging: chg == "on",
+        cleaning: cln == "on",
+        cleaning_progress: prg.parse().unwrap_or(0),
+        status: stat,
+        selected_map: map,
+    }))
+}
+
+#[derive(Serialize, Clone)]
+struct HaMowerStatus {
+    state: String,
+    state_label: String,
+    firmware: String,
+    cleaning_count: u32,
+    total_area_m2: u32,
+    total_time_min: u32,
+    dnd: bool,
+    zone_id: String,
+    zone_state: String,
+    has_update: bool,
+}
+
+#[tauri::command]
+async fn get_mower_status(
+    window: Window,
+    state: tauri::State<'_, SharedSettings>,
+) -> Result<Option<HaMowerStatus>, String> {
+    security::require_window(&window, &["main"])?;
+
+    let (url, token) = {
+        let s = state.lock().map_err(|e| e.to_string())?;
+        (s.homeassistant_url.clone(), s.homeassistant_token.clone())
+    };
+
+    if url.is_empty() || token.is_empty() {
+        return Ok(None);
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let base = url.trim_end_matches('/');
+    let auth = format!("Bearer {token}");
+
+    let (lm, fw, count, area, time_min, dnd, zone_id, zone_state, upd) = tokio::join!(
+        ha_fetch_state(&client, base, &auth, "lawn_mower.a1_pro"),
+        ha_fetch_state(&client, base, &auth, "sensor.a1_pro_firmware_version"),
+        ha_fetch_state(&client, base, &auth, "sensor.a1_pro_cleaning_count"),
+        ha_fetch_state(&client, base, &auth, "sensor.a1_pro_total_cleaned_area"),
+        ha_fetch_state(&client, base, &auth, "sensor.a1_pro_total_cleaning_time"),
+        ha_fetch_state(&client, base, &auth, "switch.a1_pro_dnd"),
+        ha_fetch_state(&client, base, &auth, "sensor.a1_pro_current_zone_id"),
+        ha_fetch_state(&client, base, &auth, "sensor.a1_pro_current_zone_state"),
+        ha_fetch_state(&client, base, &auth, "update.dreame_mower_a1_pro_update"),
+    );
+
+    let state_label = match lm.as_str() {
+        "mowing" => "Mowing",
+        "docked" => "Docked",
+        "paused" => "Paused",
+        "error" => "Error",
+        _ => "Unknown",
+    }.to_string();
+
+    Ok(Some(HaMowerStatus {
+        state: lm,
+        state_label,
+        firmware: fw,
+        cleaning_count: count.parse().unwrap_or(0),
+        total_area_m2: area.parse().unwrap_or(0),
+        total_time_min: time_min.parse().unwrap_or(0),
+        dnd: dnd == "on",
+        zone_id,
+        zone_state,
+        has_update: upd == "on",
+    }))
+}
+
+#[derive(Serialize, Clone)]
+struct PhoneStatus {
+    battery: u8,
+    charging: bool,
+    battery_state: String,
+    charge_time_min: i32,
+    at_home: bool,
+    wifi_ssid: String,
+    activity: String,
+}
+
+#[tauri::command]
+async fn get_ha_phone_status(
+    window: Window,
+    state: tauri::State<'_, SharedSettings>,
+) -> Result<Option<PhoneStatus>, String> {
+    security::require_window(&window, &["main"])?;
+
+    let (url, token) = {
+        let s = state.lock().map_err(|e| e.to_string())?;
+        (s.homeassistant_url.clone(), s.homeassistant_token.clone())
+    };
+
+    if url.is_empty() || token.is_empty() {
+        return Ok(None);
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let base = url.trim_end_matches('/');
+    let auth = format!("Bearer {token}");
+
+    let (bat, bat_state, is_charging, charge_time, tracker, wifi, activity) = tokio::join!(
+        ha_fetch_state(&client, base, &auth, "sensor.pixel_9_pro_xl_battery_level"),
+        ha_fetch_state(&client, base, &auth, "sensor.pixel_9_pro_xl_battery_state"),
+        ha_fetch_state(&client, base, &auth, "binary_sensor.pixel_9_pro_xl_is_charging"),
+        ha_fetch_state(&client, base, &auth, "sensor.pixel_9_pro_xl_remaining_charge_time"),
+        ha_fetch_state(&client, base, &auth, "device_tracker.pixel_9_pro_xl"),
+        ha_fetch_state(&client, base, &auth, "sensor.pixel_9_pro_xl_wifi_connection"),
+        ha_fetch_state(&client, base, &auth, "sensor.pixel_9_pro_xl_activity"),
+    );
+
+    let charging = is_charging == "on" || matches!(bat_state.as_str(), "charging" | "full");
+
+    Ok(Some(PhoneStatus {
+        battery: bat.parse().unwrap_or(0),
+        charging,
+        battery_state: bat_state,
+        charge_time_min: charge_time.parse().unwrap_or(-1),
+        at_home: tracker == "home",
+        wifi_ssid: wifi,
+        activity,
+    }))
+}
+
+#[derive(Serialize, Clone, Debug)]
+struct CalendarEvent {
+    summary: String,
+    start: String,
+    end: String,
+    all_day: bool,
+    description: String,
+    location: String,
+}
+
+#[tauri::command]
+async fn get_calendar_events(
+    start: String,
+    end: String,
+    window: Window,
+    state: tauri::State<'_, SharedSettings>,
+) -> Result<Option<Vec<CalendarEvent>>, String> {
+    security::require_window(&window, &["main"])?;
+
+    let (url, token, entity_id) = {
+        let s = state.lock().map_err(|e| e.to_string())?;
+        (
+            s.homeassistant_url.clone(),
+            s.homeassistant_token.clone(),
+            s.ha_calendar_entity_id.clone(),
+        )
+    };
+
+    if url.is_empty() || token.is_empty() || entity_id.is_empty() {
+        return Ok(None);
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let base = url.trim_end_matches('/');
+    let api_url = format!(
+        "{}/api/calendars/{}?start={}&end={}",
+        base,
+        entity_id,
+        urlencoding::encode(&start),
+        urlencoding::encode(&end),
+    );
+
+    let resp = client
+        .get(&api_url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Content-Type", "application/json")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !resp.status().is_success() {
+        return Ok(Some(Vec::new()));
+    }
+
+    let raw: Vec<serde_json::Value> = resp.json().await.map_err(|e| e.to_string())?;
+
+    let events = raw
+        .iter()
+        .filter_map(|e| {
+            let start_obj = e.get("start")?;
+            let end_obj = e.get("end")?;
+
+            let (start_str, all_day) =
+                if let Some(dt) = start_obj.get("dateTime").and_then(|v| v.as_str()) {
+                    (dt.to_string(), false)
+                } else if let Some(d) = start_obj.get("date").and_then(|v| v.as_str()) {
+                    (d.to_string(), true)
+                } else {
+                    return None;
+                };
+
+            let end_str = if let Some(dt) = end_obj.get("dateTime").and_then(|v| v.as_str()) {
+                dt.to_string()
+            } else {
+                end_obj
+                    .get("date")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            };
+
+            Some(CalendarEvent {
+                summary: e
+                    .get("summary")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                start: start_str,
+                end: end_str,
+                all_day,
+                description: e
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                location: e
+                    .get("location")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            })
+        })
+        .collect();
+
+    Ok(Some(events))
+}
+
+#[tauri::command]
+async fn get_ha_camera_snapshot(
+    window: Window,
+    state: tauri::State<'_, SharedSettings>,
+) -> Result<String, String> {
+    security::require_window(&window, &["main"])?;
+
+    let (url, token) = {
+        let s = state.lock().map_err(|e| e.to_string())?;
+        (s.homeassistant_url.clone(), s.homeassistant_token.clone())
+    };
+
+    if url.is_empty() || token.is_empty() {
+        return Err("Home Assistant not configured".to_string());
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let response = client
+        .get(format!(
+            "{}/api/camera_proxy/camera.garage",
+            url.trim_end_matches('/')
+        ))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .map_err(|e| format!("Camera request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Camera returned {}", response.status()));
+    }
+
+    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
+    use base64::{Engine as _, engine::general_purpose};
+    Ok(general_purpose::STANDARD.encode(&bytes))
+}
+
 // ── Main ────────────────────────────────────────────────────────────
 
 fn main() {
@@ -1302,6 +1659,7 @@ fn main() {
 
     tauri::Builder::default()
         .manage(shared.clone())
+        .manage(dreame::DreameTokenCache::default())
         .manage(media::MediaState::default())
         .manage(system_status::PrivacyState::default())
         .manage(terminal_state)
@@ -1565,7 +1923,13 @@ fn main() {
             switch_virtual_desktop,
             native_windows::set_preview_mode,
             open_demo_mode,
-            exit_demo_mode
+            exit_demo_mode,
+            dreame::dreame_get_status,
+            get_ha_camera_snapshot,
+            get_ha_vacuum_status,
+            get_mower_status,
+            get_ha_phone_status,
+            get_calendar_events
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

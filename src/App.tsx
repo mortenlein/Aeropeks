@@ -1,7 +1,8 @@
 import { useEffect, useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Music, Volume2, Clock, Play, Pause, SkipBack, SkipForward, Terminal as TerminalIcon, Bluetooth, Battery, Mic, MicOff, Video, Cloud, Power, Settings as SettingsIcon, Shield, FolderGit2 } from "lucide-react";
+import { Music, Volume2, Clock, Play, Pause, SkipBack, SkipForward, Terminal as TerminalIcon, Bluetooth, Battery, Mic, MicOff, Video, Cloud, Power, Settings as SettingsIcon, Shield, FolderGit2, Camera, Bot, Smartphone, CalendarDays } from "lucide-react";
+import dreameIcon from "./assets/dreame_icon.png";
 import { WeatherPopover } from "./WeatherPopover";
 import {
   lowestRemaining,
@@ -10,6 +11,11 @@ import {
 } from "./UsageLimitsPopover";
 import { useMenuBarModel } from "./hooks/useMenuBarModel";
 import { ProjectsPopover } from "./ProjectsPopover";
+import { MowerPopover } from "./MowerPopover";
+import { CameraPopover } from "./CameraPopover";
+import { VacuumPopover } from "./VacuumPopover";
+import { PhonePopover } from "./PhonePopover";
+import { CalendarPopover } from "./CalendarPopover";
 
 function App() {
   const {
@@ -28,10 +34,13 @@ function App() {
     time,
     toggleMic,
     togglePrivacy,
+    calendar,
+    mower,
+    phone,
+    vacuum,
     usageLimits,
     volume,
     weather,
-    windowTitle,
   } = useMenuBarModel();
   const [showVolume, setShowVolume] = useState(false);
   const [showBluetoothMenu, setShowBluetoothMenu] = useState(false);
@@ -42,6 +51,16 @@ function App() {
   const usageLimitsRef = useRef<HTMLDivElement>(null);
   const [showProjects, setShowProjects] = useState(false);
   const projectsRef = useRef<HTMLDivElement>(null);
+  const [showMower, setShowMower] = useState(false);
+  const mowerRef = useRef<HTMLDivElement>(null);
+  const [showCamera, setShowCamera] = useState(false);
+  const cameraRef = useRef<HTMLDivElement>(null);
+  const [showVacuum, setShowVacuum] = useState(false);
+  const vacuumRef = useRef<HTMLDivElement>(null);
+  const [showPhone, setShowPhone] = useState(false);
+  const phoneRef = useRef<HTMLDivElement>(null);
+  const [showCalendar, setShowCalendar] = useState(false);
+  const calendarRef = useRef<HTMLDivElement>(null);
   
   const [showPowerMenu, setShowPowerMenu] = useState(false);
   const powerMenuRef = useRef<HTMLDivElement>(null);
@@ -85,9 +104,24 @@ function App() {
       if (bluetoothRef.current && !bluetoothRef.current.contains(event.target as Node)) {
         setShowBluetoothMenu(false);
       }
+      if (mowerRef.current && !mowerRef.current.contains(event.target as Node)) {
+        setShowMower(false);
+      }
+      if (cameraRef.current && !cameraRef.current.contains(event.target as Node)) {
+        setShowCamera(false);
+      }
+      if (vacuumRef.current && !vacuumRef.current.contains(event.target as Node)) {
+        setShowVacuum(false);
+      }
+      if (phoneRef.current && !phoneRef.current.contains(event.target as Node)) {
+        setShowPhone(false);
+      }
+      if (calendarRef.current && !calendarRef.current.contains(event.target as Node)) {
+        setShowCalendar(false);
+      }
     };
 
-    if (showVolume || showPowerMenu || showWeather || showUsageLimits || showProjects || showTerminalMenu || showBluetoothMenu) {
+    if (showVolume || showPowerMenu || showWeather || showUsageLimits || showProjects || showTerminalMenu || showBluetoothMenu || showMower || showCamera || showVacuum || showPhone || showCalendar) {
       document.addEventListener("mousedown", handleClickOutside);
     } else {
       document.removeEventListener("mousedown", handleClickOutside);
@@ -99,6 +133,11 @@ function App() {
   }, [
     demoMode,
     showBluetoothMenu,
+    showCalendar,
+    showCamera,
+    showMower,
+    showPhone,
+    showVacuum,
     showPowerMenu,
     showProjects,
     showTerminalMenu,
@@ -109,12 +148,12 @@ function App() {
 
   useEffect(() => {
     // Dynamic window expansion for dropdowns/popovers
-    if (showVolume || showPowerMenu || showWeather || showUsageLimits || showProjects || showTerminalMenu || showBluetoothMenu) {
+    if (showVolume || showPowerMenu || showWeather || showUsageLimits || showProjects || showTerminalMenu || showBluetoothMenu || showMower || showCamera || showVacuum || showPhone || showCalendar) {
        invoke("set_window_height", { height: 760 }).catch(console.error);
     } else {
        invoke("set_window_height", { height: 32 }).catch(console.error);
     }
-  }, [showVolume, showPowerMenu, showWeather, showUsageLimits, showProjects, showTerminalMenu, showBluetoothMenu]);
+  }, [showVolume, showPowerMenu, showWeather, showUsageLimits, showProjects, showTerminalMenu, showBluetoothMenu, showMower, showCamera, showVacuum, showPhone, showCalendar]);
 
   useEffect(() => {
     const unlistenEnter = listen("demo-mode", () => {
@@ -161,13 +200,54 @@ function App() {
     <div className="main-window">
       <div className="menu-bar" onContextMenu={(e) => e.preventDefault()}>
         <div className="left-section">
-          <div className="app-icon" />
-          <div className="window-title">
-            {windowTitle}
-          </div>
+          {usageLimits && lowestRemaining(usageLimits) !== null && (
+            <div
+              className={`status-item usage-limits-item ${
+                (lowestRemaining(usageLimits) ?? 100) <= 20 ? "usage-critical" : ""
+              }`}
+              ref={usageLimitsRef}
+              title="AI usage limits"
+              onClick={() => setShowUsageLimits(!showUsageLimits)}
+            >
+              <UsageLimitsSummary snapshot={usageLimits} />
+              {showUsageLimits && (
+                <UsageLimitsPopover snapshot={usageLimits} />
+              )}
+            </div>
+          )}
+
+          {projects && (
+            <div
+              className="status-item projects-item"
+              ref={projectsRef}
+              title={`${projects.attentionCount} projects need attention`}
+              onClick={() => setShowProjects(!showProjects)}
+            >
+              <FolderGit2 size={15} />
+              <span
+                className={
+                  projects.averageHealth >= 80
+                    ? "project-score-ok"
+                    : projects.averageHealth >= 60
+                      ? "project-score-warn"
+                      : "project-score-bad"
+                }
+              >
+                {projects.averageHealth}
+              </span>
+              {projects.attentionCount > 0 && (
+                <small>{projects.attentionCount}</small>
+              )}
+              {showProjects && (
+                <ProjectsPopover
+                  snapshot={projects}
+                  refreshing={projectsRefreshing}
+                  onRefresh={() => refreshProjects().catch(console.error)}
+                />
+              )}
+            </div>
+          )}
         </div>
-        
-        {/* ... existing App content ... */}
         
         <div className="center-section">
           {mediaInfo ? (
@@ -218,54 +298,119 @@ function App() {
             </div>
           )}
 
-          {usageLimits && lowestRemaining(usageLimits) !== null && (
+          {settings?.homeassistant_url && (
             <div
-              className={`status-item usage-limits-item ${
-                (lowestRemaining(usageLimits) ?? 100) <= 20 ? "usage-critical" : ""
-              }`}
-              ref={usageLimitsRef}
-              title="AI usage limits"
-              onClick={() => setShowUsageLimits(!showUsageLimits)}
+              ref={cameraRef}
+              className="status-item"
+              title="Garage Camera"
+              onClick={() => setShowCamera(!showCamera)}
             >
-              <UsageLimitsSummary snapshot={usageLimits} />
-              {showUsageLimits && (
-                <UsageLimitsPopover snapshot={usageLimits} />
+              <Camera size={14} />
+              <span>Garage</span>
+              {showCamera && (
+                <div style={{ position: 'absolute', inset: 0 }} onClick={(e) => e.stopPropagation()}>
+                  <CameraPopover />
+                </div>
               )}
             </div>
           )}
 
-          {projects && (
-            <div
-              className="status-item projects-item"
-              ref={projectsRef}
-              title={`${projects.attentionCount} projects need attention`}
-              onClick={() => setShowProjects(!showProjects)}
-            >
-              <FolderGit2 size={15} />
-              <span
-                className={
-                  projects.averageHealth >= 80
-                    ? "project-score-ok"
-                    : projects.averageHealth >= 60
-                      ? "project-score-warn"
-                      : "project-score-bad"
-                }
+          {mower && (() => {
+            const mowerColor = ({ mowing: '#4ade80', paused: '#fb923c', error: '#ef4444', docked: '#a78bfa' } as Record<string, string>)[mower.state] ?? 'rgba(255,255,255,0.35)';
+            return (
+              <div
+                ref={mowerRef}
+                className={`status-item${mower.state === 'mowing' ? ' mower-active' : ''}`}
+                style={{ color: mowerColor }}
+                title={`Mower: ${mower.state_label} · fw${mower.firmware}`}
+                onClick={() => setShowMower(!showMower)}
               >
-                {projects.averageHealth}
-              </span>
-              {projects.attentionCount > 0 && (
-                <small>{projects.attentionCount}</small>
-              )}
-              {showProjects && (
-                <ProjectsPopover
-                  snapshot={projects}
-                  refreshing={projectsRefreshing}
-                  onRefresh={() => refreshProjects().catch(console.error)}
-                />
-              )}
-            </div>
-          )}
-          
+                <img src={dreameIcon} style={{ width: 16, height: 16, objectFit: 'contain', opacity: mower.state === 'error' ? 0.4 : 1 }} alt="" />
+                <span>{mower.state_label}</span>
+                {showMower && (
+                  <div style={{ position: 'absolute', inset: 0 }} onClick={(e) => e.stopPropagation()}>
+                    <MowerPopover mower={mower} />
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {vacuum && (() => {
+            const vacuumColor = ({ cleaning: '#4ade80', returning: '#60a5fa', paused: '#fb923c', error: '#ef4444', charging: '#fbbf24' } as Record<string, string>)[vacuum.status] ?? 'rgba(255,255,255,0.5)';
+            return (
+              <div
+                ref={vacuumRef}
+                className="status-item"
+                style={{ color: vacuumColor }}
+                title={`Roberto: ${vacuum.status}`}
+                onClick={() => setShowVacuum(!showVacuum)}
+              >
+                <Bot size={14} />
+                <span>{vacuum.cleaning ? `${vacuum.cleaning_progress}%` : vacuum.status.charAt(0).toUpperCase() + vacuum.status.slice(1)}</span>
+                {showVacuum && (
+                  <div style={{ position: 'absolute', inset: 0 }} onClick={(e) => e.stopPropagation()}>
+                    <VacuumPopover vacuum={vacuum} />
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {phone && (() => {
+            const battColor = phone.charging ? '#4ade80' : phone.battery <= 20 ? '#ef4444' : phone.battery <= 40 ? '#fb923c' : 'rgba(255,255,255,0.5)';
+            return (
+              <div
+                ref={phoneRef}
+                className="status-item"
+                style={{ color: battColor }}
+                title={`Pixel 9 Pro XL · ${phone.battery}% · ${phone.at_home ? 'Home' : 'Away'}`}
+                onClick={() => setShowPhone(!showPhone)}
+              >
+                <Smartphone size={13} />
+                <span>{phone.battery}%</span>
+                {showPhone && (
+                  <div style={{ position: 'absolute', inset: 0 }} onClick={(e) => e.stopPropagation()}>
+                    <PhonePopover phone={phone} />
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {calendar !== null && (() => {
+            const now = new Date();
+            const next = calendar.find(e => !e.all_day && new Date(e.end) > now);
+            const ongoing = next && new Date(next.start) <= now;
+            const calColor = ongoing ? '#4ade80' : next ? '#818cf8' : 'rgba(255,255,255,0.35)';
+            return (
+              <div
+                ref={calendarRef}
+                className="status-item"
+                style={{ color: calColor }}
+                title="Google Calendar"
+                onClick={() => setShowCalendar(!showCalendar)}
+              >
+                <CalendarDays size={13} />
+                {next && !ongoing && (
+                  <span style={{ fontSize: '11px', fontVariantNumeric: 'tabular-nums' }}>
+                    {new Date(next.start).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}
+                  </span>
+                )}
+                {ongoing && next && (
+                  <span style={{ fontSize: '11px', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {next.summary}
+                  </span>
+                )}
+                {showCalendar && (
+                  <div style={{ position: 'absolute', inset: 0 }} onClick={(e) => e.stopPropagation()}>
+                    <CalendarPopover events={calendar} />
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
           {obsStatus && (obsStatus.is_recording || obsStatus.is_streaming) && (
             <div className="status-item obs-active" title={obsStatus.is_streaming ? "OBS Streaming" : "OBS Recording"}>
               <Video size={16} />
@@ -416,7 +561,7 @@ function App() {
             )}
           </div>
 
-          <div className="status-item" onClick={() => invoke("open_settings")}>
+          <div className="status-item" onClick={() => invoke("open_settings").catch((e) => console.error("open_settings failed:", e))}>
             <SettingsIcon size={16} />
           </div>
 

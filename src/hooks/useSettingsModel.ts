@@ -29,6 +29,12 @@ export function useSettingsModel() {
   const [debugInspector, setDebugInspector] = useState(false);
   const [debugWindows, setDebugWindows] = useState<DebugWindowInfo[]>([]);
   const [shellMessage, setShellMessage] = useState("");
+  const [dreameUsername, setDreameUsername] = useState("");
+  const [dreamePassword, setDreamePassword] = useState("");
+  const [dreameDeviceId, setDreameDeviceId] = useState("");
+  const [haUrl, setHaUrl] = useState("");
+  const [haToken, setHaToken] = useState("");
+  const [haCalendarEntityId, setHaCalendarEntityId] = useState("");
 
   useEffect(() => {
     invoke<AppSettings>("get_settings")
@@ -49,6 +55,12 @@ export function useSettingsModel() {
         setReserveScreenSpace(settings.reserve_screen_space);
         setHideNativeTaskbar(settings.hide_native_taskbar);
         setDebugInspector(settings.debug_inspector);
+        setDreameUsername(settings.dreame_username);
+        setDreamePassword(settings.dreame_password);
+        setDreameDeviceId(settings.dreame_device_id);
+        setHaUrl(settings.homeassistant_url);
+        setHaToken(settings.homeassistant_token);
+        setHaCalendarEntityId(settings.ha_calendar_entity_id);
       })
       .catch((error) => setShellMessage(`Settings load failed: ${String(error)}`));
   }, []);
@@ -99,6 +111,12 @@ export function useSettingsModel() {
           reserve_screen_space: reserveScreenSpace,
           hide_native_taskbar: hideNativeTaskbar,
           debug_inspector: debugInspector,
+          dreame_username: dreameUsername,
+          dreame_password: dreamePassword,
+          dreame_device_id: dreameDeviceId,
+          homeassistant_url: haUrl,
+          homeassistant_token: haToken,
+          ha_calendar_entity_id: haCalendarEntityId,
         },
       });
       await invoke("register_hotkeys");
@@ -170,6 +188,9 @@ export function useSettingsModel() {
     addShortcut,
     debugInspector,
     debugWindows,
+    dreameDeviceId,
+    dreamePassword,
+    dreameUsername,
     handleClearIconCache,
     handleRestoreShell,
     handleSave,
@@ -192,6 +213,13 @@ export function useSettingsModel() {
     selectLocation,
     setAccentColor,
     setDebugInspector,
+    setDreameDeviceId,
+    setDreamePassword,
+    setDreameUsername,
+    setHaUrl,
+    setHaToken,
+    haCalendarEntityId,
+    setHaCalendarEntityId,
     setHideNativeTaskbar,
     setGithubToken,
     setObsPassword,
@@ -204,6 +232,8 @@ export function useSettingsModel() {
     shortcuts,
     updateShortcut,
     use24h,
+    haUrl,
+    haToken,
     weatherLat,
     weatherLocation,
     weatherLon,

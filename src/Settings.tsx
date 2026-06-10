@@ -5,13 +5,17 @@ import { useSettingsModel } from "./hooks/useSettingsModel";
 function Settings() {
   const {
     accentColor, addShortcut, debugInspector, debugWindows,
+    dreameDeviceId, dreamePassword, dreameUsername,
     githubToken, handleClearIconCache, handleRestoreShell, handleSave, handleSearch,
     hideNativeTaskbar, isSearching, obsPassword, obsUrl, plexToken, plexUrl,
     refreshDebugWindows, removeShortcut, reserveScreenSpace, saved, searchQuery,
     searchResults, selectLocation, setAccentColor, setDebugInspector,
+    setDreameDeviceId, setDreamePassword, setDreameUsername,
     setGithubToken, setHideNativeTaskbar, setObsPassword, setObsUrl, setPlexToken, setPlexUrl,
     setReserveScreenSpace, setUsageLimitsUrl, setUse24h, shellMessage, shortcuts, updateShortcut,
     use24h, usageLimitsUrl, weatherLat, weatherLocation, weatherLon,
+    haUrl, haToken, setHaUrl, setHaToken,
+    haCalendarEntityId, setHaCalendarEntityId,
   } = useSettingsModel();
 
   return (
@@ -38,6 +42,7 @@ function Settings() {
               type="password"
               value={plexToken}
               onChange={(e) => setPlexToken(e.target.value)}
+              autoComplete="new-password"
               placeholder="Enter your Plex token"
             />
             <span className="setting-hint">Used for authentication and playback control.</span>
@@ -140,6 +145,7 @@ function Settings() {
               type="password"
               value={githubToken}
               onChange={(e) => setGithubToken(e.target.value)}
+              autoComplete="new-password"
               placeholder="github_pat_..."
             />
             <span className="setting-hint">Powers the Projects view. Needs repository read access.</span>
@@ -170,11 +176,74 @@ function Settings() {
               type="password"
               value={obsPassword}
               onChange={(e) => setObsPassword(e.target.value)}
+              autoComplete="new-password"
               placeholder="Password"
               style={{ flex: 1.5 }}
             />
           </div>
           <span className="setting-hint">Enable "WebSocket Server" in OBS Studio for live status tracking.</span>
+        </div>
+
+        <div className="setting-group">
+          <label>Dreame Robot Mower</label>
+          <div className="color-row" style={{ marginTop: 0 }}>
+            <input
+              type="text"
+              value={dreameUsername}
+              onChange={(e) => setDreameUsername(e.target.value)}
+              placeholder="Dreame account email"
+              style={{ flex: 2 }}
+            />
+            <input
+              type="password"
+              value={dreamePassword}
+              onChange={(e) => setDreamePassword(e.target.value)}
+              autoComplete="new-password"
+              placeholder="Password"
+              style={{ flex: 1.5 }}
+            />
+          </div>
+          <input
+            type="text"
+            value={dreameDeviceId}
+            onChange={(e) => setDreameDeviceId(e.target.value)}
+            placeholder="Device ID (e.g. -110196586)"
+            style={{ marginTop: '6px' }}
+          />
+          <span className="setting-hint">Dreame cloud credentials for live mower status in the menu bar. Device ID from the app or your router's ARP table.</span>
+        </div>
+
+        <div className="setting-group">
+          <label>Home Assistant</label>
+          <div className="color-row" style={{ marginTop: 0 }}>
+            <input
+              type="text"
+              value={haUrl}
+              onChange={(e) => setHaUrl(e.target.value)}
+              placeholder="http://homeassistant.local:8123"
+              style={{ flex: 2 }}
+            />
+            <input
+              type="password"
+              value={haToken}
+              onChange={(e) => setHaToken(e.target.value)}
+              autoComplete="new-password"
+              placeholder="Long-lived access token"
+              style={{ flex: 2 }}
+            />
+          </div>
+          <span className="setting-hint">Shows the Garage camera in the menu bar. Token from HA Profile → Long-Lived Access Tokens.</span>
+        </div>
+
+        <div className="setting-group">
+          <label>Google Calendar Entity</label>
+          <input
+            type="text"
+            value={haCalendarEntityId}
+            onChange={(e) => setHaCalendarEntityId(e.target.value)}
+            placeholder="calendar.your_name_gmail_com"
+          />
+          <span className="setting-hint">HA entity ID for your Google Calendar. Find it in Developer Tools → States.</span>
         </div>
       </div>
 

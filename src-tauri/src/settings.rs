@@ -15,6 +15,8 @@ use windows::Win32::Security::Credentials::{
 const PLEX_TOKEN_TARGET: &str = "Aeropeks/PlexToken";
 const OBS_PASSWORD_TARGET: &str = "Aeropeks/ObsWebSocketPassword";
 const GITHUB_TOKEN_TARGET: &str = "Aeropeks/GitHubToken";
+const DREAME_PASSWORD_TARGET: &str = "Aeropeks/DreamePassword";
+const HA_TOKEN_TARGET: &str = "Aeropeks/HomeAssistantToken";
 
 fn default_accent_color() -> String {
     "#22c55e".to_string()
@@ -75,7 +77,7 @@ fn default_shortcuts() -> Vec<TerminalShortcut> {
 pub struct AppSettings {
     #[serde(default = "default_plex_url")]
     pub plex_url: String,
-    #[serde(default, skip_serializing)]
+    #[serde(default)]
     pub plex_token: String,
     #[serde(default = "default_accent_color")]
     pub accent_color: String,
@@ -89,9 +91,9 @@ pub struct AppSettings {
     pub weather_lon: Option<f64>,
     #[serde(default)]
     pub obs_websocket_url: String,
-    #[serde(default, skip_serializing)]
+    #[serde(default)]
     pub obs_websocket_password: String,
-    #[serde(default, skip_serializing)]
+    #[serde(default)]
     pub github_token: String,
     #[serde(default)]
     pub usage_limits_url: String,
@@ -103,6 +105,18 @@ pub struct AppSettings {
     pub hide_native_taskbar: bool,
     #[serde(default = "default_debug_inspector")]
     pub debug_inspector: bool,
+    #[serde(default)]
+    pub dreame_username: String,
+    #[serde(default)]
+    pub dreame_password: String,
+    #[serde(default)]
+    pub dreame_device_id: String,
+    #[serde(default)]
+    pub homeassistant_url: String,
+    #[serde(default)]
+    pub homeassistant_token: String,
+    #[serde(default)]
+    pub ha_calendar_entity_id: String,
 }
 
 impl Default for AppSettings {
@@ -123,6 +137,12 @@ impl Default for AppSettings {
             reserve_screen_space: true,
             hide_native_taskbar: false,
             debug_inspector: false,
+            dreame_username: String::new(),
+            dreame_password: String::new(),
+            dreame_device_id: String::new(),
+            homeassistant_url: String::new(),
+            homeassistant_token: String::new(),
+            ha_calendar_entity_id: String::new(),
         }
     }
 }
@@ -133,6 +153,8 @@ impl AppSettings {
         settings.plex_token.clear();
         settings.obs_websocket_password.clear();
         settings.github_token.clear();
+        settings.dreame_password.clear();
+        settings.homeassistant_token.clear();
         settings
     }
 }
@@ -195,6 +217,14 @@ pub fn load(handle: &tauri::AppHandle) -> AppSettings {
         .ok()
         .flatten()
         .unwrap_or(plaintext_github);
+    settings.dreame_password = read_secret(DREAME_PASSWORD_TARGET)
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    settings.homeassistant_token = read_secret(HA_TOKEN_TARGET)
+        .ok()
+        .flatten()
+        .unwrap_or_default();
 
     if persist_secrets(&settings).is_ok() {
         let _ = write_file(&path, &settings);
@@ -206,6 +236,8 @@ pub fn save(handle: &tauri::AppHandle, settings: &AppSettings) -> Result<(), Str
     let previous_plex = read_secret(PLEX_TOKEN_TARGET)?;
     let previous_obs = read_secret(OBS_PASSWORD_TARGET)?;
     let previous_github = read_secret(GITHUB_TOKEN_TARGET)?;
+    let previous_dreame = read_secret(DREAME_PASSWORD_TARGET)?;
+    let previous_ha = read_secret(HA_TOKEN_TARGET)?;
     let path = settings_path(handle)?;
 
     let result = persist_secrets(settings).and_then(|_| write_file(&path, settings));
@@ -213,10 +245,12 @@ pub fn save(handle: &tauri::AppHandle, settings: &AppSettings) -> Result<(), Str
         let rollback_plex = restore_secret(PLEX_TOKEN_TARGET, previous_plex.as_deref());
         let rollback_obs = restore_secret(OBS_PASSWORD_TARGET, previous_obs.as_deref());
         let rollback_github = restore_secret(GITHUB_TOKEN_TARGET, previous_github.as_deref());
-        return match (rollback_plex, rollback_obs, rollback_github) {
-            (Ok(()), Ok(()), Ok(())) => Err(error),
-            (plex, obs, github) => Err(format!(
-                "{error}; credential rollback failed: plex={plex:?}, obs={obs:?}, github={github:?}"
+        let rollback_dreame = restore_secret(DREAME_PASSWORD_TARGET, previous_dreame.as_deref());
+        let rollback_ha = restore_secret(HA_TOKEN_TARGET, previous_ha.as_deref());
+        return match (rollback_plex, rollback_obs, rollback_github, rollback_dreame, rollback_ha) {
+            (Ok(()), Ok(()), Ok(()), Ok(()), Ok(())) => Err(error),
+            (plex, obs, github, dreame, ha) => Err(format!(
+                "{error}; credential rollback failed: plex={plex:?}, obs={obs:?}, github={github:?}, dreame={dreame:?}, ha={ha:?}"
             )),
         };
     }
@@ -226,11 +260,13 @@ pub fn save(handle: &tauri::AppHandle, settings: &AppSettings) -> Result<(), Str
 fn persist_secrets(settings: &AppSettings) -> Result<(), String> {
     write_secret(PLEX_TOKEN_TARGET, &settings.plex_token)?;
     write_secret(OBS_PASSWORD_TARGET, &settings.obs_websocket_password)?;
-    write_secret(GITHUB_TOKEN_TARGET, &settings.github_token)
+    write_secret(GITHUB_TOKEN_TARGET, &settings.github_token)?;
+    write_secret(DREAME_PASSWORD_TARGET, &settings.dreame_password)?;
+    write_secret(HA_TOKEN_TARGET, &settings.homeassistant_token)
 }
 
 fn write_file(path: &Path, settings: &AppSettings) -> Result<(), String> {
-    let content = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
+    let content = serde_json::to_string_pretty(&settings.without_secrets()).map_err(|e| e.to_string())?;
     let temporary = path.with_extension("json.tmp");
     let backup = path.with_extension("json.bak");
     fs::write(&temporary, content).map_err(|e| e.to_string())?;
@@ -413,6 +449,8 @@ mod tests {
             "reserve_screen_space",
             "hide_native_taskbar",
             "debug_inspector",
+            "homeassistant_url",
+            "homeassistant_token",
         ] {
             assert!(contract.contains(&format!("{field}:")));
         }
