@@ -5,6 +5,11 @@ export interface TerminalShortcut {
   shortcut: string;
 }
 
+export interface PinnedShortcut {
+  id: string;
+  url: string;
+}
+
 export interface SimpleModule {
   enabled: boolean;
 }
@@ -70,6 +75,7 @@ export interface AppSettings {
   homeassistant_url: string;
   homeassistant_token: string;
   homeassistant_poll_seconds: number;
+  pinned_shortcuts: PinnedShortcut[];
   modules: ModulesConfig;
 }
 

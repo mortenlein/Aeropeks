@@ -7,7 +7,8 @@ import { CameraPopover } from "./CameraPopover";
 import { VacuumPopover } from "./VacuumPopover";
 import { PhonePopover } from "./PhonePopover";
 import { CalendarPopover } from "./CalendarPopover";
-import { BarChip, BarItem, MowerGlyph } from "./atoms";
+import { ShortcutsPanel } from "./Shortcuts";
+import { BarChip, BarItem, MowerGlyph, TrayIcon } from "./atoms";
 import { Icon } from "./icons";
 import { HUE, T } from "./tokens";
 import type { useMenuBarModel } from "./hooks/useMenuBarModel";
@@ -101,6 +102,19 @@ const projectsModule: BarModuleDef = {
         onRefresh={() => m.refreshProjects().catch(console.error)}
       />
     ),
+};
+
+// ── Shortcuts ────────────────────────────────────────────────────────
+// One quiet tray item; favicons live in the dropdown only (spec rule).
+
+const shortcutsModule: BarModuleDef = {
+  id: "shortcuts",
+  section: "dev",
+  visible: () => true,
+  item: (_m, { open, toggle }) => (
+    <TrayIcon icon={<Icon name="extlink" size={11} />} state={open ? "open" : "idle"} onClick={toggle} />
+  ),
+  popover: (m) => <ShortcutsPanel shortcuts={m.settings?.pinned_shortcuts ?? []} />,
 };
 
 // ── Weather ──────────────────────────────────────────────────────────
@@ -251,6 +265,7 @@ const calendarModule: BarModuleDef = {
 export const BAR_MODULES: BarModuleDef[] = [
   usageLimitsModule,
   projectsModule,
+  shortcutsModule,
   weatherModule,
   cameraModule,
   mowerModule,

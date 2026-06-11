@@ -64,6 +64,13 @@ fn default_shortcuts() -> Vec<TerminalShortcut> {
     ]
 }
 
+/// A user-pinned website shown in the Shortcuts dropdown (max 8).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PinnedShortcut {
+    pub id: String,
+    pub url: String,
+}
+
 fn default_enabled() -> bool {
     true
 }
@@ -236,6 +243,8 @@ pub struct AppSettings {
     #[serde(default = "default_ha_poll_seconds")]
     pub homeassistant_poll_seconds: u32,
     #[serde(default)]
+    pub pinned_shortcuts: Vec<PinnedShortcut>,
+    #[serde(default)]
     pub modules: ModulesConfig,
 }
 
@@ -264,6 +273,7 @@ impl Default for AppSettings {
             homeassistant_url: String::new(),
             homeassistant_token: String::new(),
             homeassistant_poll_seconds: default_ha_poll_seconds(),
+            pinned_shortcuts: Vec::new(),
             modules: ModulesConfig::default(),
         }
     }
@@ -615,6 +625,7 @@ mod tests {
             "homeassistant_url",
             "homeassistant_token",
             "homeassistant_poll_seconds",
+            "pinned_shortcuts",
             "modules",
         ] {
             assert!(contract.contains(&format!("{field}:")));

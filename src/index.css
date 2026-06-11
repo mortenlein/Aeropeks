@@ -38,15 +38,15 @@
   /* Partly-cloudy icon cloud-fill — must match panel background */
   --aero-panel-fill: #0e1013;
 
-  /* Domain hues — matches tokens.ts HUE constants */
-  --hue-mower:   oklch(0.71 0.13 302);
+  /* Domain hues — matches tokens.ts HUE constants (Terminal Precision v2) */
+  --hue-media:   oklch(0.74 0.14 55);
+  --hue-amber:   oklch(0.78 0.13 85);
+  --hue-ok:      oklch(0.74 0.14 152);
+  --hue-phone:   oklch(0.75 0.12 172);
+  --hue-weather: oklch(0.75 0.12 218);
   --hue-vacuum:  oklch(0.72 0.12 248);
-  --hue-phone:   oklch(0.72 0.11 220);
-  --hue-camera:  oklch(0.70 0.14 25);
-  --hue-weather: oklch(0.72 0.12 210);
-  --hue-cal:     oklch(0.72 0.12 275);
-  --hue-ok:      oklch(0.72 0.17 145);
-  --hue-amber:   oklch(0.78 0.14 70);
+  --hue-cal:     oklch(0.71 0.12 276);
+  --hue-mower:   oklch(0.71 0.13 302);
   --hue-red:     oklch(0.66 0.19 25);
 }
 

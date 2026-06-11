@@ -10,6 +10,7 @@ mod projects;
 mod security;
 mod settings;
 mod shell;
+mod shortcuts;
 mod system_status;
 mod terminal;
 
@@ -603,7 +604,10 @@ fn main() {
             exit_demo_mode,
             ha::get_ha_camera_snapshot,
             ha::get_ha_snapshot,
-            ha::get_calendar_events
+            ha::get_calendar_events,
+            shortcuts::set_pinned_shortcuts,
+            shortcuts::open_shortcut,
+            shortcuts::get_favicon
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

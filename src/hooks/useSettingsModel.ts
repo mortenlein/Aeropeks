@@ -4,6 +4,7 @@ import type {
   AppSettings,
   LocationResult,
   ModulesConfig,
+  PinnedShortcut,
   TerminalShortcut,
 } from "../contracts";
 import { defaultModules } from "../contracts";
@@ -33,6 +34,9 @@ export function useSettingsModel() {
   const [haToken, setHaToken] = useState("");
   const [haPollSeconds, setHaPollSeconds] = useState(30);
   const [modules, setModules] = useState<ModulesConfig>(defaultModules());
+  // Managed from the bar dropdown, not the Settings UI — held here only so
+  // saving Settings doesn't wipe them.
+  const [pinnedShortcuts, setPinnedShortcuts] = useState<PinnedShortcut[]>([]);
 
   useEffect(() => {
     invoke<AppSettings>("get_settings")
@@ -56,6 +60,7 @@ export function useSettingsModel() {
         setHaUrl(settings.homeassistant_url);
         setHaToken(settings.homeassistant_token);
         setHaPollSeconds(settings.homeassistant_poll_seconds ?? 30);
+        setPinnedShortcuts(settings.pinned_shortcuts ?? []);
         setModules(settings.modules ?? defaultModules());
       })
       .catch((error) => setShellMessage(`Settings load failed: ${String(error)}`));
@@ -110,6 +115,7 @@ export function useSettingsModel() {
           homeassistant_url: haUrl,
           homeassistant_token: haToken,
           homeassistant_poll_seconds: haPollSeconds,
+          pinned_shortcuts: pinnedShortcuts,
           modules,
         },
       });
