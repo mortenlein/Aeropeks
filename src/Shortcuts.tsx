@@ -79,6 +79,9 @@ export function ShortcutsPanel({ shortcuts, onClose }: {
   const [draft, setDraft] = useState("");
   const [draftName, setDraftName] = useState("");
   const [hoveredRow, setHoveredRow] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editUrl, setEditUrl] = useState("");
   const valid = parseShortcutUrl(draft);
   const full = shortcuts.length >= MAX_SLOTS;
 
@@ -96,6 +99,30 @@ export function ShortcutsPanel({ shortcuts, onClose }: {
     invoke("open_shortcut", { id }).catch((e) => console.error("Opening shortcut failed", e));
     onClose?.();
   };
+  const startEdit = (s: PinnedShortcut) => {
+    setEditingId(s.id);
+    setEditName(s.name);
+    setEditUrl(s.url);
+  };
+  const editValid = parseShortcutUrl(editUrl);
+  const commitEdit = () => {
+    if (!editingId || !editValid) return;
+    save(shortcuts.map((s) =>
+      s.id === editingId ? { ...s, name: editName.trim().slice(0, 60), url: editValid } : s,
+    ));
+    setEditingId(null);
+  };
+
+  const editInputStyle = {
+    background: T.inputBg,
+    border: T.inputBorder,
+    borderRadius: T.ctlR,
+    padding: '3px 7px',
+    outline: 'none',
+    color: T.t1,
+    caretColor: 'var(--accent)',
+    minWidth: 0,
+  } as const;
 
   return (
     <Panel
@@ -138,35 +165,84 @@ export function ShortcutsPanel({ shortcuts, onClose }: {
 
       {/* list */}
       <div style={{ display: 'flex', flexDirection: 'column' }}>
-        {shortcuts.map((s, i) => (
-          <div
-            key={s.id}
-            onClick={() => openShortcut(s.id)}
-            onMouseEnter={() => setHoveredRow(s.id)}
-            onMouseLeave={() => setHoveredRow(null)}
-            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 6px', borderRadius: T.ctlR, cursor: 'pointer', background: hoveredRow === s.id ? T.ctlBg : 'transparent', borderTop: i > 0 ? `1px solid ${T.divider}` : 'none' }}
-          >
-            <Favicon url={s.url} size={16} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 12.5, fontWeight: 600, color: T.t1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {s.name || shortcutHost(s.url)}
-              </div>
-              <Mono size={9.5} color={T.t3} style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.url}</Mono>
-            </div>
-            <span style={{ color: T.t3, display: 'flex', padding: 2 }}>
-              <Icon name="extlink" size={11} />
-            </span>
-            <span
-              onClick={(e) => {
-                e.stopPropagation();
-                save(shortcuts.filter((x) => x.id !== s.id));
-              }}
-              style={{ color: T.t3, display: 'flex', cursor: 'pointer', padding: 2, visibility: hoveredRow === s.id ? 'visible' : 'hidden' }}
+        {shortcuts.map((s, i) =>
+          editingId === s.id ? (
+            <div
+              key={s.id}
+              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 6px', borderTop: i > 0 ? `1px solid ${T.divider}` : 'none' }}
             >
-              <Icon name="close" size={9} />
-            </span>
-          </div>
-        ))}
+              <Favicon url={s.url} size={16} />
+              <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <input
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') setEditingId(null); }}
+                  placeholder="Name"
+                  maxLength={60}
+                  autoFocus
+                  style={{ ...editInputStyle, fontFamily: 'var(--font-ui)', fontSize: 12, fontWeight: 600 }}
+                />
+                <input
+                  value={editUrl}
+                  onChange={(e) => setEditUrl(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') setEditingId(null); }}
+                  placeholder="URL"
+                  style={{ ...editInputStyle, fontFamily: 'var(--font-mono)', fontSize: 10.5 }}
+                />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
+                <span
+                  onClick={commitEdit}
+                  style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.12em', textTransform: 'uppercase', fontWeight: 600, color: editValid ? 'var(--accent)' : T.t3, cursor: editValid ? 'pointer' : 'default', userSelect: 'none' }}
+                >
+                  Save
+                </span>
+                <span
+                  onClick={() => setEditingId(null)}
+                  style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.12em', textTransform: 'uppercase', fontWeight: 600, color: T.t3, cursor: 'pointer', userSelect: 'none' }}
+                >
+                  Cancel
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div
+              key={s.id}
+              onClick={() => openShortcut(s.id)}
+              onMouseEnter={() => setHoveredRow(s.id)}
+              onMouseLeave={() => setHoveredRow(null)}
+              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 6px', borderRadius: T.ctlR, cursor: 'pointer', background: hoveredRow === s.id ? T.ctlBg : 'transparent', borderTop: i > 0 ? `1px solid ${T.divider}` : 'none' }}
+            >
+              <Favicon url={s.url} size={16} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 600, color: T.t1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {s.name || shortcutHost(s.url)}
+                </div>
+                <Mono size={9.5} color={T.t3} style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.url}</Mono>
+              </div>
+              <span
+                onClick={(e) => {
+                  e.stopPropagation();
+                  startEdit(s);
+                }}
+                title="Edit"
+                style={{ color: T.t3, display: 'flex', cursor: 'pointer', padding: 2, visibility: hoveredRow === s.id ? 'visible' : 'hidden' }}
+              >
+                <Icon name="gear" size={11} />
+              </span>
+              <span
+                onClick={(e) => {
+                  e.stopPropagation();
+                  save(shortcuts.filter((x) => x.id !== s.id));
+                }}
+                title="Remove"
+                style={{ color: T.t3, display: 'flex', cursor: 'pointer', padding: 2, visibility: hoveredRow === s.id ? 'visible' : 'hidden' }}
+              >
+                <Icon name="close" size={9} />
+              </span>
+            </div>
+          ),
+        )}
         {shortcuts.length === 0 && (
           <div style={{ padding: '18px 2px', fontSize: 11.5, color: T.t3 }}>
             No shortcuts yet — paste a URL above to pin one.

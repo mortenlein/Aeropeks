@@ -107,6 +107,27 @@ fn favicon_cache_dir() -> PathBuf {
         .join("favicon-cache")
 }
 
+/// Infer a mime type from the URL path when the server sends a generic
+/// content-type (common for .ico files on small self-hosted services).
+fn mime_from_path(url: &str) -> Option<&'static str> {
+    let path = url.split(['?', '#']).next()?.to_ascii_lowercase();
+    if path.ends_with(".ico") {
+        Some("image/x-icon")
+    } else if path.ends_with(".png") {
+        Some("image/png")
+    } else if path.ends_with(".svg") {
+        Some("image/svg+xml")
+    } else if path.ends_with(".jpg") || path.ends_with(".jpeg") {
+        Some("image/jpeg")
+    } else if path.ends_with(".gif") {
+        Some("image/gif")
+    } else if path.ends_with(".webp") {
+        Some("image/webp")
+    } else {
+        None
+    }
+}
+
 async fn fetch_icon(client: &reqwest::Client, url: &str) -> Option<String> {
     let response = client
         .get(url)
@@ -117,18 +138,20 @@ async fn fetch_icon(client: &reqwest::Client, url: &str) -> Option<String> {
     if !response.status().is_success() {
         return None;
     }
-    let content_type = response
+    let header_type = response
         .headers()
-        .get("content-type")?
-        .to_str()
-        .ok()?
-        .split(';')
-        .next()?
-        .trim()
-        .to_string();
-    if !content_type.starts_with("image/") {
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .map(|value| value.trim().to_ascii_lowercase())
+        .unwrap_or_default();
+    let content_type = if header_type.starts_with("image/") {
+        header_type
+    } else if header_type.is_empty() || header_type == "application/octet-stream" {
+        mime_from_path(url)?.to_string()
+    } else {
         return None;
-    }
+    };
     let bytes = response.bytes().await.ok()?;
     if bytes.is_empty() || bytes.len() > MAX_ICON_BYTES {
         return None;
@@ -140,9 +163,95 @@ async fn fetch_icon(client: &reqwest::Client, url: &str) -> Option<String> {
     ))
 }
 
-/// Returns the site's favicon as a data URI: the site's own /favicon.ico
-/// first, Google's favicon service as fallback. Successes are cached to disk
-/// so the dropdown never shows resolving slots on later launches.
+/// Pull an attribute value out of a raw HTML tag without a full parser.
+fn extract_attr(tag: &str, name: &str) -> Option<String> {
+    let lower = tag.to_ascii_lowercase();
+    let needle = format!("{name}=");
+    let mut search = 0;
+    while let Some(found) = lower[search..].find(&needle) {
+        let pos = search + found;
+        // Avoid matching inside other attribute names (e.g. data-href=).
+        let preceded_ok = lower[..pos]
+            .chars()
+            .last()
+            .is_some_and(|c| c.is_whitespace());
+        if !preceded_ok {
+            search = pos + needle.len();
+            continue;
+        }
+        let rest = &tag[pos + needle.len()..];
+        let value = match rest.chars().next() {
+            Some(quote @ ('"' | '\'')) => {
+                let inner = &rest[1..];
+                inner[..inner.find(quote).unwrap_or(inner.len())].to_string()
+            }
+            Some(_) => rest[..rest
+                .find(|c: char| c.is_whitespace() || c == '>')
+                .unwrap_or(rest.len())]
+                .to_string(),
+            None => String::new(),
+        };
+        return Some(value);
+    }
+    None
+}
+
+/// Find the first `<link rel="…icon…" href="…">` in a page. This is how
+/// self-hosted dashboards (Frigate, Home Assistant, …) declare their icons —
+/// they often have no /favicon.ico and are invisible to Google's service.
+fn find_icon_href(html: &str) -> Option<String> {
+    let lower = html.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(found) = lower[from..].find("<link") {
+        let start = from + found;
+        let end = lower[start..].find('>').map(|e| start + e)?;
+        let tag = &html[start..end];
+        let rel = extract_attr(tag, "rel").unwrap_or_default().to_ascii_lowercase();
+        let is_icon = rel
+            .split_whitespace()
+            .any(|part| part == "icon" || part == "apple-touch-icon");
+        if is_icon {
+            if let Some(href) = extract_attr(tag, "href") {
+                if !href.is_empty() {
+                    return Some(href);
+                }
+            }
+        }
+        from = end + 1;
+    }
+    None
+}
+
+/// Fetch the site root and follow its declared icon link.
+async fn fetch_declared_icon(client: &reqwest::Client, base: &reqwest::Url) -> Option<String> {
+    let root = base.join("/").ok()?;
+    let response = client
+        .get(root.clone())
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let bytes = response.bytes().await.ok()?;
+    if bytes.len() > 1_048_576 {
+        return None;
+    }
+    let html = String::from_utf8_lossy(&bytes);
+    let href = find_icon_href(&html)?;
+    let icon_url = root.join(href.trim()).ok()?;
+    if !matches!(icon_url.scheme(), "http" | "https") {
+        return None;
+    }
+    fetch_icon(client, icon_url.as_str()).await
+}
+
+/// Returns the site's favicon as a data URI. Strategy: the icon declared in
+/// the page's HTML first (works for self-hosted services), then /favicon.ico
+/// on the same origin, then Google's favicon service for public sites.
+/// Successes are cached to disk so the dropdown never shows resolving slots
+/// on later launches.
 #[tauri::command]
 pub async fn get_favicon(
     url: String,
@@ -151,39 +260,73 @@ pub async fn get_favicon(
 ) -> Result<String, String> {
     security::require_window(&window, &["main"])?;
     validate_shortcut_url(&url)?;
-    let host = reqwest::Url::parse(&url)
-        .map_err(|e| e.to_string())?
-        .host_str()
-        .unwrap_or_default()
-        .to_ascii_lowercase();
+    let parsed = reqwest::Url::parse(&url).map_err(|e| e.to_string())?;
+    let host = parsed.host_str().unwrap_or_default().to_ascii_lowercase();
     if !is_safe_host(&host) {
         return Err("invalid shortcut host".to_string());
     }
+    let port = parsed.port_or_known_default().unwrap_or(443);
 
-    let cache_path = favicon_cache_dir().join(format!("{host}.uri"));
+    let cache_path = favicon_cache_dir().join(format!("{host}-{port}.uri"));
     if let Ok(cached) = std::fs::read_to_string(&cache_path) {
         if cached.starts_with("data:image/") {
             return Ok(cached);
         }
     }
 
-    let candidates = [
-        format!("https://{host}/favicon.ico"),
-        format!("https://www.google.com/s2/favicons?domain={host}&sz=64"),
-    ];
-    for candidate in candidates {
-        if let Some(uri) = fetch_icon(&http.0, &candidate).await {
-            let _ = std::fs::create_dir_all(favicon_cache_dir());
-            let _ = std::fs::write(&cache_path, &uri);
-            return Ok(uri);
+    let mut icon = fetch_declared_icon(&http.0, &parsed).await;
+    if icon.is_none() {
+        if let Ok(direct) = parsed.join("/favicon.ico") {
+            icon = fetch_icon(&http.0, direct.as_str()).await;
         }
     }
-    Err("no favicon found".to_string())
+    if icon.is_none() {
+        let fallback = format!("https://www.google.com/s2/favicons?domain={host}&sz=64");
+        icon = fetch_icon(&http.0, &fallback).await;
+    }
+
+    match icon {
+        Some(uri) => {
+            let _ = std::fs::create_dir_all(favicon_cache_dir());
+            let _ = std::fs::write(&cache_path, &uri);
+            Ok(uri)
+        }
+        None => Err("no favicon found".to_string()),
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{is_safe_host, validate_shortcut_id, validate_shortcut_url};
+    use super::{
+        find_icon_href, is_safe_host, mime_from_path, validate_shortcut_id, validate_shortcut_url,
+    };
+
+    #[test]
+    fn icon_links_are_found_in_page_html() {
+        assert_eq!(
+            find_icon_href(r#"<html><head><link rel="icon" href="/favicon.svg" /></head>"#),
+            Some("/favicon.svg".to_string())
+        );
+        assert_eq!(
+            find_icon_href(r#"<link rel='shortcut icon' href='/static/icons/favicon.ico'>"#),
+            Some("/static/icons/favicon.ico".to_string())
+        );
+        assert_eq!(
+            find_icon_href(r#"<link rel="apple-touch-icon" href="/apple.png">"#),
+            Some("/apple.png".to_string())
+        );
+        // stylesheet links and mask icons are not favicons
+        assert_eq!(find_icon_href(r#"<link rel="stylesheet" href="/x.css">"#), None);
+        assert_eq!(find_icon_href(r#"<link rel="mask-icon" href="/m.svg">"#), None);
+        assert_eq!(find_icon_href("<p>no links</p>"), None);
+    }
+
+    #[test]
+    fn generic_content_types_fall_back_to_path_extension() {
+        assert_eq!(mime_from_path("https://x.com/favicon.ico"), Some("image/x-icon"));
+        assert_eq!(mime_from_path("https://x.com/i.png?v=2"), Some("image/png"));
+        assert_eq!(mime_from_path("https://x.com/page.html"), None);
+    }
 
     #[test]
     fn shortcut_urls_are_http_only_with_real_hosts() {
