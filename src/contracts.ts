@@ -8,6 +8,7 @@ export interface TerminalShortcut {
 export interface PinnedShortcut {
   id: string;
   url: string;
+  name: string;
 }
 
 export interface SimpleModule {

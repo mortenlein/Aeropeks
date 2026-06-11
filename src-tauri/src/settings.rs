@@ -69,6 +69,9 @@ fn default_shortcuts() -> Vec<TerminalShortcut> {
 pub struct PinnedShortcut {
     pub id: String,
     pub url: String,
+    /// Display label; the hostname is shown when empty.
+    #[serde(default)]
+    pub name: String,
 }
 
 fn default_enabled() -> bool {

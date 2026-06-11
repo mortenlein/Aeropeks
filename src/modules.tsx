@@ -114,7 +114,9 @@ const shortcutsModule: BarModuleDef = {
   item: (_m, { open, toggle }) => (
     <TrayIcon icon={<Icon name="extlink" size={11} />} state={open ? "open" : "idle"} onClick={toggle} />
   ),
-  popover: (m) => <ShortcutsPanel shortcuts={m.settings?.pinned_shortcuts ?? []} />,
+  popover: (m, { toggle }) => (
+    <ShortcutsPanel shortcuts={m.settings?.pinned_shortcuts ?? []} onClose={toggle} />
+  ),
 };
 
 // ── Weather ──────────────────────────────────────────────────────────

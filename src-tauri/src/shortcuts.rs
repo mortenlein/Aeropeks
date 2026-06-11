@@ -54,6 +54,9 @@ pub fn set_pinned_shortcuts(
     for shortcut in &shortcuts {
         validate_shortcut_id(&shortcut.id)?;
         validate_shortcut_url(&shortcut.url)?;
+        if shortcut.name.len() > 60 {
+            return Err("shortcut name is too long".to_string());
+        }
     }
 
     let updated = {

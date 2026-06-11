@@ -72,8 +72,12 @@ function Favicon({ url, size = 14 }: { url: string; size?: number }) {
   );
 }
 
-export function ShortcutsPanel({ shortcuts }: { shortcuts: PinnedShortcut[] }) {
+export function ShortcutsPanel({ shortcuts, onClose }: {
+  shortcuts: PinnedShortcut[];
+  onClose?: () => void;
+}) {
   const [draft, setDraft] = useState("");
+  const [draftName, setDraftName] = useState("");
   const [hoveredRow, setHoveredRow] = useState<string | null>(null);
   const valid = parseShortcutUrl(draft);
   const full = shortcuts.length >= MAX_SLOTS;
@@ -84,11 +88,14 @@ export function ShortcutsPanel({ shortcuts }: { shortcuts: PinnedShortcut[] }) {
     );
   const add = () => {
     if (!valid || full) return;
-    save([...shortcuts, { id: `sc-${Date.now()}`, url: valid }]);
+    save([...shortcuts, { id: `sc-${Date.now()}`, url: valid, name: draftName.trim().slice(0, 60) }]);
     setDraft("");
+    setDraftName("");
   };
-  const openShortcut = (id: string) =>
+  const openShortcut = (id: string) => {
     invoke("open_shortcut", { id }).catch((e) => console.error("Opening shortcut failed", e));
+    onClose?.();
+  };
 
   return (
     <Panel
@@ -104,10 +111,20 @@ export function ShortcutsPanel({ shortcuts }: { shortcuts: PinnedShortcut[] }) {
           ? <Favicon url={valid} size={14} />
           : <span style={{ width: 14, height: 14, borderRadius: 3, border: `1px dashed ${T.divider}`, flexShrink: 0 }} />}
         <input
+          value={draftName}
+          onChange={(e) => setDraftName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') add(); }}
+          placeholder="Name"
+          disabled={full}
+          maxLength={60}
+          style={{ width: 76, flexShrink: 0, background: 'transparent', border: 'none', outline: 'none', fontFamily: 'var(--font-ui)', fontSize: 12, fontWeight: 600, color: T.t1, caretColor: 'var(--accent)' }}
+        />
+        <span style={{ width: 1, alignSelf: 'stretch', background: T.divider, flexShrink: 0 }} />
+        <input
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') add(); }}
-          placeholder={full ? 'all slots in use' : 'paste a URL — favicon becomes the icon'}
+          placeholder={full ? 'all slots in use' : 'paste a URL'}
           disabled={full}
           style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', outline: 'none', fontFamily: 'var(--font-mono)', fontSize: 11, color: T.t1, caretColor: 'var(--accent)' }}
         />
@@ -131,7 +148,9 @@ export function ShortcutsPanel({ shortcuts }: { shortcuts: PinnedShortcut[] }) {
           >
             <Favicon url={s.url} size={16} />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 12.5, fontWeight: 600, color: T.t1 }}>{shortcutHost(s.url)}</div>
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: T.t1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {s.name || shortcutHost(s.url)}
+              </div>
               <Mono size={9.5} color={T.t3} style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.url}</Mono>
             </div>
             <span style={{ color: T.t3, display: 'flex', padding: 2 }}>
