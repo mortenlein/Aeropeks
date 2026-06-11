@@ -383,14 +383,20 @@ async fn get_ha_vacuum_status(
 ) -> Result<Option<VacuumStatus>, String> {
     security::require_window(&window, &["main"])?;
 
-    let (url, token) = {
+    let (url, token, module) = {
         let s = state.lock().map_err(|e| e.to_string())?;
-        (s.homeassistant_url.clone(), s.homeassistant_token.clone())
+        (
+            s.homeassistant_url.clone(),
+            s.homeassistant_token.clone(),
+            s.modules.vacuum.clone(),
+        )
     };
 
-    if url.is_empty() || token.is_empty() {
+    if !module.enabled || module.entity_id.is_empty() || url.is_empty() || token.is_empty() {
         return Ok(None);
     }
+    security::validate_ha_entity_id(&module.entity_id)?;
+    let obj = module.entity_id.split_once('.').map(|(_, o)| o).unwrap_or_default();
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(8))
@@ -400,14 +406,20 @@ async fn get_ha_vacuum_status(
     let base = url.trim_end_matches('/');
     let auth = format!("Bearer {token}");
 
+    let e_battery = format!("sensor.{obj}_battery");
+    let e_status = format!("sensor.{obj}_status");
+    let e_charging = format!("binary_sensor.{obj}_charging");
+    let e_cleaning = format!("binary_sensor.{obj}_cleaning");
+    let e_progress = format!("sensor.{obj}_cleaning_progress");
+    let e_map = format!("select.{obj}_selected_map");
     let (vac, bat, stat, chg, cln, prg, map) = tokio::join!(
-        ha_fetch_state(&client, base, &auth, "vacuum.roberto"),
-        ha_fetch_state(&client, base, &auth, "sensor.roberto_battery"),
-        ha_fetch_state(&client, base, &auth, "sensor.roberto_status"),
-        ha_fetch_state(&client, base, &auth, "binary_sensor.roberto_charging"),
-        ha_fetch_state(&client, base, &auth, "binary_sensor.roberto_cleaning"),
-        ha_fetch_state(&client, base, &auth, "sensor.roberto_cleaning_progress"),
-        ha_fetch_state(&client, base, &auth, "select.roberto_selected_map"),
+        ha_fetch_state(&client, base, &auth, &module.entity_id),
+        ha_fetch_state(&client, base, &auth, &e_battery),
+        ha_fetch_state(&client, base, &auth, &e_status),
+        ha_fetch_state(&client, base, &auth, &e_charging),
+        ha_fetch_state(&client, base, &auth, &e_cleaning),
+        ha_fetch_state(&client, base, &auth, &e_progress),
+        ha_fetch_state(&client, base, &auth, &e_map),
     );
 
     Ok(Some(VacuumStatus {
@@ -442,14 +454,23 @@ async fn get_mower_status(
 ) -> Result<Option<HaMowerStatus>, String> {
     security::require_window(&window, &["main"])?;
 
-    let (url, token) = {
+    let (url, token, module) = {
         let s = state.lock().map_err(|e| e.to_string())?;
-        (s.homeassistant_url.clone(), s.homeassistant_token.clone())
+        (
+            s.homeassistant_url.clone(),
+            s.homeassistant_token.clone(),
+            s.modules.mower.clone(),
+        )
     };
 
-    if url.is_empty() || token.is_empty() {
+    if !module.enabled || module.entity_id.is_empty() || url.is_empty() || token.is_empty() {
         return Ok(None);
     }
+    security::validate_ha_entity_id(&module.entity_id)?;
+    if !module.update_entity_id.is_empty() {
+        security::validate_ha_entity_id(&module.update_entity_id)?;
+    }
+    let obj = module.entity_id.split_once('.').map(|(_, o)| o).unwrap_or_default();
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(8))
@@ -459,16 +480,30 @@ async fn get_mower_status(
     let base = url.trim_end_matches('/');
     let auth = format!("Bearer {token}");
 
+    let update_fut = async {
+        if module.update_entity_id.is_empty() {
+            String::new()
+        } else {
+            ha_fetch_state(&client, base, &auth, &module.update_entity_id).await
+        }
+    };
+    let e_firmware = format!("sensor.{obj}_firmware_version");
+    let e_count = format!("sensor.{obj}_cleaning_count");
+    let e_area = format!("sensor.{obj}_total_cleaned_area");
+    let e_time = format!("sensor.{obj}_total_cleaning_time");
+    let e_dnd = format!("switch.{obj}_dnd");
+    let e_zone_id = format!("sensor.{obj}_current_zone_id");
+    let e_zone_state = format!("sensor.{obj}_current_zone_state");
     let (lm, fw, count, area, time_min, dnd, zone_id, zone_state, upd) = tokio::join!(
-        ha_fetch_state(&client, base, &auth, "lawn_mower.a1_pro"),
-        ha_fetch_state(&client, base, &auth, "sensor.a1_pro_firmware_version"),
-        ha_fetch_state(&client, base, &auth, "sensor.a1_pro_cleaning_count"),
-        ha_fetch_state(&client, base, &auth, "sensor.a1_pro_total_cleaned_area"),
-        ha_fetch_state(&client, base, &auth, "sensor.a1_pro_total_cleaning_time"),
-        ha_fetch_state(&client, base, &auth, "switch.a1_pro_dnd"),
-        ha_fetch_state(&client, base, &auth, "sensor.a1_pro_current_zone_id"),
-        ha_fetch_state(&client, base, &auth, "sensor.a1_pro_current_zone_state"),
-        ha_fetch_state(&client, base, &auth, "update.dreame_mower_a1_pro_update"),
+        ha_fetch_state(&client, base, &auth, &module.entity_id),
+        ha_fetch_state(&client, base, &auth, &e_firmware),
+        ha_fetch_state(&client, base, &auth, &e_count),
+        ha_fetch_state(&client, base, &auth, &e_area),
+        ha_fetch_state(&client, base, &auth, &e_time),
+        ha_fetch_state(&client, base, &auth, &e_dnd),
+        ha_fetch_state(&client, base, &auth, &e_zone_id),
+        ha_fetch_state(&client, base, &auth, &e_zone_state),
+        update_fut,
     );
 
     let state_label = match lm.as_str() {
@@ -511,14 +546,20 @@ async fn get_ha_phone_status(
 ) -> Result<Option<PhoneStatus>, String> {
     security::require_window(&window, &["main"])?;
 
-    let (url, token) = {
+    let (url, token, module) = {
         let s = state.lock().map_err(|e| e.to_string())?;
-        (s.homeassistant_url.clone(), s.homeassistant_token.clone())
+        (
+            s.homeassistant_url.clone(),
+            s.homeassistant_token.clone(),
+            s.modules.phone.clone(),
+        )
     };
 
-    if url.is_empty() || token.is_empty() {
+    if !module.enabled || module.device_slug.is_empty() || url.is_empty() || token.is_empty() {
         return Ok(None);
     }
+    security::validate_ha_slug(&module.device_slug)?;
+    let slug = &module.device_slug;
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(8))
@@ -528,14 +569,21 @@ async fn get_ha_phone_status(
     let base = url.trim_end_matches('/');
     let auth = format!("Bearer {token}");
 
+    let e_battery = format!("sensor.{slug}_battery_level");
+    let e_bat_state = format!("sensor.{slug}_battery_state");
+    let e_charging = format!("binary_sensor.{slug}_is_charging");
+    let e_charge_time = format!("sensor.{slug}_remaining_charge_time");
+    let e_tracker = format!("device_tracker.{slug}");
+    let e_wifi = format!("sensor.{slug}_wifi_connection");
+    let e_activity = format!("sensor.{slug}_activity");
     let (bat, bat_state, is_charging, charge_time, tracker, wifi, activity) = tokio::join!(
-        ha_fetch_state(&client, base, &auth, "sensor.pixel_9_pro_xl_battery_level"),
-        ha_fetch_state(&client, base, &auth, "sensor.pixel_9_pro_xl_battery_state"),
-        ha_fetch_state(&client, base, &auth, "binary_sensor.pixel_9_pro_xl_is_charging"),
-        ha_fetch_state(&client, base, &auth, "sensor.pixel_9_pro_xl_remaining_charge_time"),
-        ha_fetch_state(&client, base, &auth, "device_tracker.pixel_9_pro_xl"),
-        ha_fetch_state(&client, base, &auth, "sensor.pixel_9_pro_xl_wifi_connection"),
-        ha_fetch_state(&client, base, &auth, "sensor.pixel_9_pro_xl_activity"),
+        ha_fetch_state(&client, base, &auth, &e_battery),
+        ha_fetch_state(&client, base, &auth, &e_bat_state),
+        ha_fetch_state(&client, base, &auth, &e_charging),
+        ha_fetch_state(&client, base, &auth, &e_charge_time),
+        ha_fetch_state(&client, base, &auth, &e_tracker),
+        ha_fetch_state(&client, base, &auth, &e_wifi),
+        ha_fetch_state(&client, base, &auth, &e_activity),
     );
 
     let charging = is_charging == "on" || matches!(bat_state.as_str(), "charging" | "full");
@@ -570,18 +618,20 @@ async fn get_calendar_events(
 ) -> Result<Option<Vec<CalendarEvent>>, String> {
     security::require_window(&window, &["main"])?;
 
-    let (url, token, entity_id) = {
+    let (url, token, module) = {
         let s = state.lock().map_err(|e| e.to_string())?;
         (
             s.homeassistant_url.clone(),
             s.homeassistant_token.clone(),
-            s.ha_calendar_entity_id.clone(),
+            s.modules.calendar.clone(),
         )
     };
 
-    if url.is_empty() || token.is_empty() || entity_id.is_empty() {
+    if !module.enabled || module.entity_id.is_empty() || url.is_empty() || token.is_empty() {
         return Ok(None);
     }
+    security::validate_ha_entity_id(&module.entity_id)?;
+    let entity_id = module.entity_id;
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(8))
@@ -669,14 +719,19 @@ async fn get_ha_camera_snapshot(
 ) -> Result<String, String> {
     security::require_window(&window, &["main"])?;
 
-    let (url, token) = {
+    let (url, token, module) = {
         let s = state.lock().map_err(|e| e.to_string())?;
-        (s.homeassistant_url.clone(), s.homeassistant_token.clone())
+        (
+            s.homeassistant_url.clone(),
+            s.homeassistant_token.clone(),
+            s.modules.camera.clone(),
+        )
     };
 
-    if url.is_empty() || token.is_empty() {
-        return Err("Home Assistant not configured".to_string());
+    if !module.enabled || module.entity_id.is_empty() || url.is_empty() || token.is_empty() {
+        return Err("Home Assistant camera not configured".to_string());
     }
+    security::validate_ha_entity_id(&module.entity_id)?;
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(8))
@@ -685,8 +740,9 @@ async fn get_ha_camera_snapshot(
 
     let response = client
         .get(format!(
-            "{}/api/camera_proxy/camera.garage",
-            url.trim_end_matches('/')
+            "{}/api/camera_proxy/{}",
+            url.trim_end_matches('/'),
+            module.entity_id
         ))
         .header("Authorization", format!("Bearer {token}"))
         .send()

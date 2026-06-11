@@ -78,15 +78,22 @@ still strip secrets via `without_secrets()` (disk, broadcast, non-settings
 windows), and the settings window receives secrets over IPC by design. The
 settings test now guards the `without_secrets()` contract instead.*
 
-## Phase 2 — Module config schema
+## Phase 2 — Module config schema ✅ DONE 2026-06-11
 
-- [ ] Add `modules` to `AppSettings`: `{ [id]: { enabled: bool, ...config } }` with
-      serde defaults; migrate existing flat fields (weather coords, HA url, etc.).
-- [ ] Move all entity IDs into module config: camera entity, vacuum entity prefix,
-      mower entity prefix, phone device slug, calendar entity.
-- [ ] New Settings layout: a **Modules** section — one card per module with an
-      enable toggle and its config fields.
-- [ ] `useMenuBarModel`: only fetch + schedule intervals for enabled modules.
+- [x] `modules` struct in `AppSettings` (typed per-module config, serde defaults);
+      legacy settings files are migrated on load — previously hardcoded entity ids
+      are seeded, and the old flat `ha_calendar_entity_id` is carried over.
+- [x] All entity IDs moved into module config: camera entity, vacuum entity
+      (sensor names derived from its object id), mower entity + optional update
+      entity, phone device slug, calendar entity. Entity ids/slugs are strictly
+      validated (`security::validate_ha_entity_id` / `validate_ha_slug`) since
+      they are interpolated into REST URL paths.
+- [x] Settings: new **Bar Modules** section — toggles for media / weather /
+      usage limits / projects / OBS, and toggle + entity inputs for the five
+      HA modules.
+- [x] `useMenuBarModel` split into a core effect (settings, volume, system
+      statuses, event listeners) and a module effect that fetches + schedules
+      intervals only for enabled, configured modules and tears down on toggle.
 
 ## Phase 3 — Frontend module registry
 

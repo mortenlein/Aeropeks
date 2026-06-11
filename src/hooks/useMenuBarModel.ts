@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
@@ -36,6 +36,9 @@ const formatTime = (date: Date, use24h: boolean) =>
     hour12: !use24h,
   });
 
+const report = (operation: string, error: unknown) =>
+  console.error(`[menu-bar] ${operation} failed`, error);
+
 export function useMenuBarModel() {
   const [mediaInfo, setMediaInfo] = useState<MediaInfo | null>(null);
   const [volume, setVolume] = useState(0.5);
@@ -59,41 +62,48 @@ export function useMenuBarModel() {
   const [use24h, setUse24h] = useState(true);
   const [time, setTime] = useState(() => formatTime(new Date(), true));
 
+  // The media-change event arrives regardless of module state; this ref lets
+  // the listener (bound once) respect the current toggle.
+  const mediaEnabledRef = useRef(true);
+
+  const applySettings = useCallback((next: AppSettings) => {
+    setSettings(next);
+    setUse24h(next.use_24h !== false);
+    document.documentElement.style.setProperty("--accent", next.accent_color);
+  }, []);
+
   const fetchMedia = useCallback(async () => {
     setMediaInfo(await invoke<MediaInfo | null>("get_media_info_unified"));
   }, []);
 
-  const fetchStatuses = useCallback(async () => {
-    const [nextBattery, nextBluetooth, nextMicMuted, nextPrivacyMode, nextObsStatus] =
+  const fetchCoreStatuses = useCallback(async () => {
+    const [nextBattery, nextBluetooth, nextMicMuted, nextPrivacyMode] =
       await Promise.all([
         invoke<BatteryStatus>("get_battery_status"),
         invoke<BluetoothStatus>("get_bluetooth_status"),
         invoke<boolean>("get_mic_status"),
         invoke<boolean>("get_privacy_status"),
-        invoke<ObsStatus>("get_obs_status"),
       ]);
     setBattery(nextBattery);
     setBluetooth(nextBluetooth);
     setMicMuted(nextMicMuted);
     setPrivacyMode(nextPrivacyMode);
-    setObsStatus(nextObsStatus);
   }, []);
 
-  const fetchWeather = useCallback(async (nextSettings?: AppSettings) => {
-    const resolvedSettings =
-      nextSettings ?? (await invoke<AppSettings>("get_settings"));
-    if (
-      resolvedSettings.weather_lat === null ||
-      resolvedSettings.weather_lon === null
-    ) {
+  const fetchObs = useCallback(async () => {
+    setObsStatus(await invoke<ObsStatus>("get_obs_status"));
+  }, []);
+
+  const fetchWeather = useCallback(async (forSettings: AppSettings) => {
+    if (forSettings.weather_lat === null || forSettings.weather_lon === null) {
       setWeather(null);
       return;
     }
     setWeather(
       await invoke<WeatherDetailed>("get_weather", {
-        lat: resolvedSettings.weather_lat,
-        lon: resolvedSettings.weather_lon,
-        placeName: resolvedSettings.weather_location || "Unknown",
+        lat: forSettings.weather_lat,
+        lon: forSettings.weather_lon,
+        placeName: forSettings.weather_location || "Unknown",
       }),
     );
   }, []);
@@ -132,105 +142,116 @@ export function useMenuBarModel() {
     setCalendar(await invoke<CalendarEvent[] | null>("get_calendar_events", { start, end }));
   }, []);
 
+  // Core: settings, volume, system statuses, event listeners. Runs once.
   useEffect(() => {
     let disposed = false;
-    const report = (operation: string, error: unknown) =>
-      console.error(`[menu-bar] ${operation} failed`, error);
 
     invoke<AppSettings>("get_settings")
-      .then((nextSettings) => {
-        if (disposed) return;
-        setSettings(nextSettings);
-        setUse24h(nextSettings.use_24h !== false);
-        document.documentElement.style.setProperty(
-          "--accent",
-          nextSettings.accent_color,
-        );
+      .then((next) => {
+        if (!disposed) applySettings(next);
       })
       .catch((error) => report("load settings", error));
     invoke<number>("get_volume")
       .then(setVolume)
       .catch((error) => report("load volume", error));
-    fetchMedia().catch((error) => report("load media", error));
-    fetchStatuses().catch((error) => report("load statuses", error));
-    fetchWeather().catch((error) => report("load weather", error));
-    fetchUsageLimits().catch((error) => report("load usage limits", error));
-    fetchProjects().catch((error) => report("load projects", error));
-    fetchMower().catch((error) => report("load mower", error));
-    fetchVacuum().catch((error) => report("load vacuum", error));
-    fetchPhone().catch((error) => report("load phone", error));
-    fetchCalendar().catch((error) => report("load calendar", error));
+    fetchCoreStatuses().catch((error) => report("load statuses", error));
 
     const statusInterval = window.setInterval(
-      () => fetchStatuses().catch((error) => report("refresh statuses", error)),
+      () => fetchCoreStatuses().catch((error) => report("refresh statuses", error)),
       5000,
     );
-    const weatherInterval = window.setInterval(
-      () => fetchWeather().catch((error) => report("refresh weather", error)),
-      600000,
-    );
-    const usageLimitsInterval = window.setInterval(
-      () =>
-        fetchUsageLimits().catch((error) =>
-          report("refresh usage limits", error),
-        ),
-      60000,
-    );
-    const projectsInterval = window.setInterval(
-      () => fetchProjects().catch((error) => report("refresh projects", error)),
-      300000,
-    );
-    const mowerInterval = window.setInterval(
-      () => fetchMower().catch((error) => report("refresh mower", error)),
-      60000,
-    );
-    const vacuumInterval = window.setInterval(
-      () => fetchVacuum().catch((error) => report("refresh vacuum", error)),
-      30000,
-    );
-    const phoneInterval = window.setInterval(
-      () => fetchPhone().catch((error) => report("refresh phone", error)),
-      60000,
-    );
-    const calendarInterval = window.setInterval(
-      () => fetchCalendar().catch((error) => report("refresh calendar", error)),
-      300000,
-    );
     const unlisteners = [
-      listen<MediaInfo | null>("media-change", ({ payload }) =>
-        setMediaInfo(payload),
-      ),
+      listen<MediaInfo | null>("media-change", ({ payload }) => {
+        if (mediaEnabledRef.current) setMediaInfo(payload);
+      }),
       listen<AppSettings>("settings-changed", ({ payload }) => {
-        setSettings(payload);
-        setUse24h(payload.use_24h !== false);
-        document.documentElement.style.setProperty("--accent", payload.accent_color);
-        fetchWeather(payload).catch((error) =>
-          report("refresh weather after settings change", error),
-        );
-        fetchMedia().catch((error) =>
-          report("refresh media after settings change", error),
-        );
-        fetchProjects(true).catch((error) =>
-          report("refresh projects after settings change", error),
-        );
+        // Module polling reconfigures via the effect below.
+        applySettings(payload);
       }),
     ];
 
     return () => {
       disposed = true;
       window.clearInterval(statusInterval);
-      window.clearInterval(weatherInterval);
-      window.clearInterval(usageLimitsInterval);
-      window.clearInterval(projectsInterval);
-      window.clearInterval(mowerInterval);
-      window.clearInterval(vacuumInterval);
-      window.clearInterval(phoneInterval);
-      window.clearInterval(calendarInterval);
       Promise.all(unlisteners).then((callbacks) =>
         callbacks.forEach((unlisten) => unlisten()),
       );
     };
-  }, [fetchCalendar, fetchMedia, fetchMower, fetchPhone, fetchProjects, fetchStatuses, fetchUsageLimits, fetchVacuum, fetchWeather]);
+  }, [applySettings, fetchCoreStatuses]);
+
+  // Modules: fetch + poll only what is enabled and configured.
+  // Re-runs whenever settings change, tearing down disabled modules.
+  useEffect(() => {
+    if (!settings) return;
+    const m = settings.modules;
+    const timers: number[] = [];
+    const poll = (fetch: () => Promise<void>, ms: number, label: string) => {
+      fetch().catch((error) => report(`load ${label}`, error));
+      timers.push(
+        window.setInterval(
+          () => fetch().catch((error) => report(`refresh ${label}`, error)),
+          ms,
+        ),
+      );
+    };
+
+    mediaEnabledRef.current = m.media.enabled;
+    if (m.media.enabled) {
+      // Event-driven afterwards; backend pushes media-change.
+      fetchMedia().catch((error) => report("load media", error));
+    } else {
+      setMediaInfo(null);
+    }
+
+    if (m.weather.enabled && settings.weather_lat !== null && settings.weather_lon !== null) {
+      poll(() => fetchWeather(settings), 600000, "weather");
+    } else {
+      setWeather(null);
+    }
+
+    if (m.obs.enabled && settings.obs_websocket_url.trim() !== "") {
+      poll(fetchObs, 5000, "obs");
+    } else {
+      setObsStatus(null);
+    }
+
+    if (m.usage_limits.enabled && settings.usage_limits_url.trim() !== "") {
+      poll(fetchUsageLimits, 60000, "usage limits");
+    } else {
+      setUsageLimits(null);
+    }
+
+    if (m.projects.enabled) {
+      poll(() => fetchProjects(), 300000, "projects");
+    } else {
+      setProjects(null);
+    }
+
+    const haReady = settings.homeassistant_url.trim() !== "";
+    if (haReady && m.mower.enabled && m.mower.entity_id !== "") {
+      poll(fetchMower, 60000, "mower");
+    } else {
+      setMower(null);
+    }
+    if (haReady && m.vacuum.enabled && m.vacuum.entity_id !== "") {
+      poll(fetchVacuum, 30000, "vacuum");
+    } else {
+      setVacuum(null);
+    }
+    if (haReady && m.phone.enabled && m.phone.device_slug !== "") {
+      poll(fetchPhone, 60000, "phone");
+    } else {
+      setPhone(null);
+    }
+    if (haReady && m.calendar.enabled && m.calendar.entity_id !== "") {
+      poll(fetchCalendar, 300000, "calendar");
+    } else {
+      setCalendar(null);
+    }
+
+    return () => timers.forEach((timer) => window.clearInterval(timer));
+  }, [settings, fetchCalendar, fetchMedia, fetchMower, fetchObs, fetchPhone,
+      fetchProjects, fetchUsageLimits, fetchVacuum, fetchWeather]);
 
   useEffect(() => {
     setTime(formatTime(new Date(), use24h));

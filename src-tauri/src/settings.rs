@@ -70,6 +70,137 @@ fn default_shortcuts() -> Vec<TerminalShortcut> {
     ]
 }
 
+fn default_enabled() -> bool {
+    true
+}
+
+/// Module with no extra config beyond on/off.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SimpleModule {
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+}
+
+impl Default for SimpleModule {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+/// Module backed by a single Home Assistant entity.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct HaEntityModule {
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub entity_id: String,
+}
+
+impl Default for HaEntityModule {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            entity_id: String::new(),
+        }
+    }
+}
+
+/// Mower needs the lawn_mower entity plus an optional update entity that
+/// doesn't follow the sensor-prefix naming convention.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MowerModule {
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub entity_id: String,
+    #[serde(default)]
+    pub update_entity_id: String,
+}
+
+impl Default for MowerModule {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            entity_id: String::new(),
+            update_entity_id: String::new(),
+        }
+    }
+}
+
+/// Phone companion entities all share an HA device slug
+/// (e.g. sensor.{slug}_battery_level, device_tracker.{slug}).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PhoneModule {
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub device_slug: String,
+}
+
+impl Default for PhoneModule {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            device_slug: String::new(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct ModulesConfig {
+    #[serde(default)]
+    pub media: SimpleModule,
+    #[serde(default)]
+    pub weather: SimpleModule,
+    #[serde(default)]
+    pub usage_limits: SimpleModule,
+    #[serde(default)]
+    pub projects: SimpleModule,
+    #[serde(default)]
+    pub obs: SimpleModule,
+    #[serde(default)]
+    pub camera: HaEntityModule,
+    #[serde(default)]
+    pub vacuum: HaEntityModule,
+    #[serde(default)]
+    pub calendar: HaEntityModule,
+    #[serde(default)]
+    pub mower: MowerModule,
+    #[serde(default)]
+    pub phone: PhoneModule,
+}
+
+impl ModulesConfig {
+    /// Seed for settings files written before the modules schema existed:
+    /// these entity ids used to be hardcoded in main.rs.
+    fn legacy(calendar_entity_id: String) -> Self {
+        Self {
+            camera: HaEntityModule {
+                enabled: true,
+                entity_id: "camera.garage".to_string(),
+            },
+            vacuum: HaEntityModule {
+                enabled: true,
+                entity_id: "vacuum.roberto".to_string(),
+            },
+            calendar: HaEntityModule {
+                enabled: true,
+                entity_id: calendar_entity_id,
+            },
+            mower: MowerModule {
+                enabled: true,
+                entity_id: "lawn_mower.a1_pro".to_string(),
+                update_entity_id: "update.dreame_mower_a1_pro_update".to_string(),
+            },
+            phone: PhoneModule {
+                enabled: true,
+                device_slug: "pixel_9_pro_xl".to_string(),
+            },
+            ..Self::default()
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AppSettings {
     #[serde(default = "default_plex_url")]
@@ -108,7 +239,7 @@ pub struct AppSettings {
     #[serde(default)]
     pub homeassistant_token: String,
     #[serde(default)]
-    pub ha_calendar_entity_id: String,
+    pub modules: ModulesConfig,
 }
 
 impl Default for AppSettings {
@@ -131,7 +262,7 @@ impl Default for AppSettings {
             hide_native_taskbar: false,
             homeassistant_url: String::new(),
             homeassistant_token: String::new(),
-            ha_calendar_entity_id: String::new(),
+            modules: ModulesConfig::default(),
         }
     }
 }
@@ -171,6 +302,24 @@ fn migrate_file(handle: &tauri::AppHandle, new_path: &Path) {
     }
 }
 
+/// Migrate pre-module settings files: seed the module config with the entity
+/// ids that used to be hardcoded, and carry over the old flat calendar field.
+fn migrate_legacy_modules(content: &str, settings: &mut AppSettings) {
+    if content.contains("\"modules\"") {
+        return;
+    }
+    let legacy_calendar = serde_json::from_str::<serde_json::Value>(content)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("ha_calendar_entity_id")
+                .and_then(|id| id.as_str())
+                .map(String::from)
+        })
+        .unwrap_or_default();
+    settings.modules = ModulesConfig::legacy(legacy_calendar);
+}
+
 pub fn load(handle: &tauri::AppHandle) -> AppSettings {
     let Ok(path) = settings_path(handle) else {
         return AppSettings::default();
@@ -179,7 +328,10 @@ pub fn load(handle: &tauri::AppHandle) -> AppSettings {
 
     let mut settings = match fs::read_to_string(&path) {
         Ok(content) => match serde_json::from_str::<AppSettings>(&content) {
-            Ok(settings) => settings,
+            Ok(mut settings) => {
+                migrate_legacy_modules(&content, &mut settings);
+                settings
+            }
             Err(_) => {
                 let mut backup = path.clone();
                 backup.set_extension("json.error");
@@ -353,9 +505,34 @@ fn read_secret(target: &str) -> Result<Option<String>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{write_file, AppSettings};
+    use super::{migrate_legacy_modules, write_file, AppSettings};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn legacy_settings_get_seeded_with_previously_hardcoded_entities() {
+        let content = r##"{"accent_color":"#000000","ha_calendar_entity_id":"calendar.test_cal"}"##;
+        let mut settings: AppSettings = serde_json::from_str(content).unwrap();
+        migrate_legacy_modules(content, &mut settings);
+
+        assert_eq!(settings.modules.camera.entity_id, "camera.garage");
+        assert_eq!(settings.modules.vacuum.entity_id, "vacuum.roberto");
+        assert_eq!(settings.modules.mower.entity_id, "lawn_mower.a1_pro");
+        assert_eq!(settings.modules.phone.device_slug, "pixel_9_pro_xl");
+        assert_eq!(settings.modules.calendar.entity_id, "calendar.test_cal");
+        assert!(settings.modules.media.enabled);
+    }
+
+    #[test]
+    fn migration_leaves_module_aware_files_untouched() {
+        let content = r##"{"modules":{"vacuum":{"enabled":false,"entity_id":"vacuum.other"}}}"##;
+        let mut settings: AppSettings = serde_json::from_str(content).unwrap();
+        migrate_legacy_modules(content, &mut settings);
+
+        assert!(!settings.modules.vacuum.enabled);
+        assert_eq!(settings.modules.vacuum.entity_id, "vacuum.other");
+        assert_eq!(settings.modules.camera.entity_id, "");
+    }
 
     // Secrets travel to the settings window over IPC by design (so they are
     // editable there); every persisted or broadcast copy must go through
@@ -435,6 +612,7 @@ mod tests {
             "hide_native_taskbar",
             "homeassistant_url",
             "homeassistant_token",
+            "modules",
         ] {
             assert!(contract.contains(&format!("{field}:")));
         }

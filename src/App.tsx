@@ -165,7 +165,15 @@ function App() {
     try { await togglePrivacy(); } catch (e) { console.error("Privacy mode toggle failed", e); }
   };
 
-  const hasHome = !!(settings?.homeassistant_url || mower || vacuum);
+  const mediaEnabled = settings?.modules.media.enabled !== false;
+  const camera = settings?.modules.camera;
+  const cameraConfigured = !!(
+    settings?.homeassistant_url && camera?.enabled && camera.entity_id
+  );
+  const cameraLabel = camera?.entity_id
+    ? camera.entity_id.split(".")[1].replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase())
+    : "Camera";
+  const hasHome = !!(cameraConfigured || mower || vacuum);
   const hasPersonal = !!(phone || calendar !== null);
 
   const volPct = Math.round(volume * 100);
@@ -228,7 +236,7 @@ function App() {
 
         {/* ── NOW PLAYING ────────────────────────────────────────────── */}
         <div className="center-section">
-          {mediaInfo ? (
+          {!mediaEnabled ? null : mediaInfo ? (
             <BarGroup gap={4}>
               <span style={{ display: 'inline-flex', gap: 2, marginRight: 4 }}>
                 <span style={{ color: T.t3, display: 'flex', padding: 3, cursor: 'pointer' }}
@@ -285,15 +293,15 @@ function App() {
           {hasHome && (
             <BarGroup gap={10}>
 
-              {settings?.homeassistant_url && (
+              {cameraConfigured && (
                 <div ref={cameraRef} className="bar-anchor">
                   <BarItem
                     icon={<Icon name="cam" size={12} />}
                     hue={T.t3}
-                    text="Garage"
+                    text={cameraLabel}
                     onClick={() => setShowCamera(!showCamera)}
                   />
-                  {showCamera && <CameraPopover />}
+                  {showCamera && <CameraPopover label={cameraLabel} />}
                 </div>
               )}
 

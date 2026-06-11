@@ -151,8 +151,8 @@ function Settings() {
     setHaUrl,
     haToken,
     setHaToken,
-    haCalendarEntityId,
-    setHaCalendarEntityId,
+    modules,
+    updateModule,
     reserveScreenSpace,
     setReserveScreenSpace,
     hideNativeTaskbar,
@@ -357,15 +357,117 @@ function Settings() {
               </div>
             </SetField>
           </div>
+        </SetSection>
 
-          <SetField label="Google Calendar Entity" help="HA entity ID for your Google Calendar. Find it in Developer Tools → States.">
-            <Inp
-              value={haCalendarEntityId}
-              onChange={(e) => setHaCalendarEntityId(e.target.value)}
-              placeholder="calendar.your_name_gmail_com"
-              style={{ fontFamily: "var(--font-mono)" }}
+        {/* Bar Modules */}
+        <SetSection title="Bar Modules">
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <SetCheck
+              on={modules.media.enabled}
+              onChange={(v) => updateModule("media", { enabled: v })}
+              label="Now Playing"
+              help="Media controls and track info in the bar center."
             />
-          </SetField>
+            <SetCheck
+              on={modules.weather.enabled}
+              onChange={(v) => updateModule("weather", { enabled: v })}
+              label="Weather"
+              help="Uses the location configured under External Services."
+            />
+            <SetCheck
+              on={modules.usage_limits.enabled}
+              onChange={(v) => updateModule("usage_limits", { enabled: v })}
+              label="AI Usage Limits"
+              help="Provider chips fed by the usage limits service."
+            />
+            <SetCheck
+              on={modules.projects.enabled}
+              onChange={(v) => updateModule("projects", { enabled: v })}
+              label="GitHub Projects"
+              help="Repository dashboard. Needs the GitHub token."
+            />
+            <SetCheck
+              on={modules.obs.enabled}
+              onChange={(v) => updateModule("obs", { enabled: v })}
+              label="OBS Status"
+              help="Recording/streaming indicator via OBS WebSocket."
+            />
+          </div>
+
+          <Micro color={T.t3} style={{ marginTop: 4 }}>Home Assistant Modules</Micro>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <SetCheck
+                on={modules.camera.enabled}
+                onChange={(v) => updateModule("camera", { enabled: v })}
+                label="Camera"
+              />
+              <Inp
+                value={modules.camera.entity_id}
+                onChange={(e) => updateModule("camera", { entity_id: e.target.value })}
+                placeholder="camera.garage"
+                style={{ fontFamily: "var(--font-mono)" }}
+              />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <SetCheck
+                on={modules.vacuum.enabled}
+                onChange={(v) => updateModule("vacuum", { enabled: v })}
+                label="Vacuum"
+              />
+              <Inp
+                value={modules.vacuum.entity_id}
+                onChange={(e) => updateModule("vacuum", { entity_id: e.target.value })}
+                placeholder="vacuum.roberto"
+                style={{ fontFamily: "var(--font-mono)" }}
+              />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <SetCheck
+                on={modules.mower.enabled}
+                onChange={(v) => updateModule("mower", { enabled: v })}
+                label="Lawn Mower"
+              />
+              <Inp
+                value={modules.mower.entity_id}
+                onChange={(e) => updateModule("mower", { entity_id: e.target.value })}
+                placeholder="lawn_mower.a1_pro"
+                style={{ fontFamily: "var(--font-mono)" }}
+              />
+              <Inp
+                value={modules.mower.update_entity_id}
+                onChange={(e) => updateModule("mower", { update_entity_id: e.target.value })}
+                placeholder="update.… (optional firmware update entity)"
+                style={{ fontFamily: "var(--font-mono)" }}
+              />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <SetCheck
+                on={modules.phone.enabled}
+                onChange={(v) => updateModule("phone", { enabled: v })}
+                label="Phone"
+              />
+              <Inp
+                value={modules.phone.device_slug}
+                onChange={(e) => updateModule("phone", { device_slug: e.target.value })}
+                placeholder="pixel_9_pro_xl (HA device slug)"
+                style={{ fontFamily: "var(--font-mono)" }}
+              />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <SetCheck
+                on={modules.calendar.enabled}
+                onChange={(v) => updateModule("calendar", { enabled: v })}
+                label="Calendar"
+              />
+              <Inp
+                value={modules.calendar.entity_id}
+                onChange={(e) => updateModule("calendar", { entity_id: e.target.value })}
+                placeholder="calendar.your_name_gmail_com"
+                style={{ fontFamily: "var(--font-mono)" }}
+              />
+            </div>
+          </div>
         </SetSection>
 
         {/* Shell Companion */}

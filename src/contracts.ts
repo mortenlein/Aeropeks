@@ -5,6 +5,52 @@ export interface TerminalShortcut {
   shortcut: string;
 }
 
+export interface SimpleModule {
+  enabled: boolean;
+}
+
+export interface HaEntityModule {
+  enabled: boolean;
+  entity_id: string;
+}
+
+export interface MowerModule {
+  enabled: boolean;
+  entity_id: string;
+  update_entity_id: string;
+}
+
+export interface PhoneModule {
+  enabled: boolean;
+  device_slug: string;
+}
+
+export interface ModulesConfig {
+  media: SimpleModule;
+  weather: SimpleModule;
+  usage_limits: SimpleModule;
+  projects: SimpleModule;
+  obs: SimpleModule;
+  camera: HaEntityModule;
+  vacuum: HaEntityModule;
+  calendar: HaEntityModule;
+  mower: MowerModule;
+  phone: PhoneModule;
+}
+
+export const defaultModules = (): ModulesConfig => ({
+  media: { enabled: true },
+  weather: { enabled: true },
+  usage_limits: { enabled: true },
+  projects: { enabled: true },
+  obs: { enabled: true },
+  camera: { enabled: true, entity_id: "" },
+  vacuum: { enabled: true, entity_id: "" },
+  calendar: { enabled: true, entity_id: "" },
+  mower: { enabled: true, entity_id: "", update_entity_id: "" },
+  phone: { enabled: true, device_slug: "" },
+});
+
 export interface AppSettings {
   plex_url: string;
   plex_token: string;
@@ -23,7 +69,7 @@ export interface AppSettings {
   hide_native_taskbar: boolean;
   homeassistant_url: string;
   homeassistant_token: string;
-  ha_calendar_entity_id: string;
+  modules: ModulesConfig;
 }
 
 export interface VacuumStatus {

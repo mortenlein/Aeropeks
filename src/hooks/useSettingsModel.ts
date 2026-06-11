@@ -3,8 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AppSettings,
   LocationResult,
+  ModulesConfig,
   TerminalShortcut,
 } from "../contracts";
+import { defaultModules } from "../contracts";
 
 export function useSettingsModel() {
   const [plexUrl, setPlexUrl] = useState("");
@@ -29,7 +31,7 @@ export function useSettingsModel() {
   const [shellMessage, setShellMessage] = useState("");
   const [haUrl, setHaUrl] = useState("");
   const [haToken, setHaToken] = useState("");
-  const [haCalendarEntityId, setHaCalendarEntityId] = useState("");
+  const [modules, setModules] = useState<ModulesConfig>(defaultModules());
 
   useEffect(() => {
     invoke<AppSettings>("get_settings")
@@ -52,7 +54,7 @@ export function useSettingsModel() {
         setHideNativeTaskbar(settings.hide_native_taskbar);
         setHaUrl(settings.homeassistant_url);
         setHaToken(settings.homeassistant_token);
-        setHaCalendarEntityId(settings.ha_calendar_entity_id);
+        setModules(settings.modules ?? defaultModules());
       })
       .catch((error) => setShellMessage(`Settings load failed: ${String(error)}`));
   }, []);
@@ -105,7 +107,7 @@ export function useSettingsModel() {
           hide_native_taskbar: hideNativeTaskbar,
           homeassistant_url: haUrl,
           homeassistant_token: haToken,
-          ha_calendar_entity_id: haCalendarEntityId,
+          modules,
         },
       });
       await invoke("register_hotkeys");
@@ -140,6 +142,15 @@ export function useSettingsModel() {
 
   const removeShortcut = (id: string) =>
     setShortcuts((current) => current.filter((shortcut) => shortcut.id !== id));
+
+  const updateModule = <K extends keyof ModulesConfig>(
+    id: K,
+    patch: Partial<ModulesConfig[K]>,
+  ) =>
+    setModules((current) => ({
+      ...current,
+      [id]: { ...current[id], ...patch },
+    }));
 
   const updateShortcut = (
     id: string,
@@ -178,8 +189,8 @@ export function useSettingsModel() {
     setAccentColor,
     setHaUrl,
     setHaToken,
-    haCalendarEntityId,
-    setHaCalendarEntityId,
+    modules,
+    updateModule,
     setHideNativeTaskbar,
     setGithubToken,
     setObsPassword,

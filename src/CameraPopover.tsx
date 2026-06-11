@@ -4,7 +4,7 @@ import { Panel, Micro } from "./atoms";
 import { Icon } from "./icons";
 import { HUE, T } from "./tokens";
 
-export function CameraPopover() {
+export function CameraPopover({ label = "Camera" }: { label?: string }) {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const intervalRef = useRef<number | null>(null);
@@ -30,7 +30,7 @@ export function CameraPopover() {
   return (
     <Panel
       w={460}
-      title="Garage"
+      title={label}
       icon={<Icon name="cam" size={13} />}
       hue={HUE.red}
       style={{ right: 0 }}
@@ -43,7 +43,7 @@ export function CameraPopover() {
     >
       <div style={{ borderRadius: T.cardR, overflow: "hidden", background: "rgba(0,0,0,0.3)", aspectRatio: "16 / 9", display: "flex", alignItems: "center", justifyContent: "center" }}>
         {imageSrc ? (
-          <img src={imageSrc} alt="Garage" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+          <img src={imageSrc} alt={label} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
         ) : error ? (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, color: T.t3 }}>
             <Icon name="cam" size={18} />
