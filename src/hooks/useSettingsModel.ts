@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AppSettings,
-  DebugWindowInfo,
   LocationResult,
   TerminalShortcut,
 } from "../contracts";
@@ -27,12 +26,7 @@ export function useSettingsModel() {
   const [usageHiddenProviders, setUsageHiddenProviders] = useState<string[]>([]);
   const [reserveScreenSpace, setReserveScreenSpace] = useState(true);
   const [hideNativeTaskbar, setHideNativeTaskbar] = useState(false);
-  const [debugInspector, setDebugInspector] = useState(false);
-  const [debugWindows, setDebugWindows] = useState<DebugWindowInfo[]>([]);
   const [shellMessage, setShellMessage] = useState("");
-  const [dreameUsername, setDreameUsername] = useState("");
-  const [dreamePassword, setDreamePassword] = useState("");
-  const [dreameDeviceId, setDreameDeviceId] = useState("");
   const [haUrl, setHaUrl] = useState("");
   const [haToken, setHaToken] = useState("");
   const [haCalendarEntityId, setHaCalendarEntityId] = useState("");
@@ -56,10 +50,6 @@ export function useSettingsModel() {
         setUse24h(settings.use_24h);
         setReserveScreenSpace(settings.reserve_screen_space);
         setHideNativeTaskbar(settings.hide_native_taskbar);
-        setDebugInspector(settings.debug_inspector);
-        setDreameUsername(settings.dreame_username);
-        setDreamePassword(settings.dreame_password);
-        setDreameDeviceId(settings.dreame_device_id);
         setHaUrl(settings.homeassistant_url);
         setHaToken(settings.homeassistant_token);
         setHaCalendarEntityId(settings.ha_calendar_entity_id);
@@ -113,10 +103,6 @@ export function useSettingsModel() {
           use_24h: use24h,
           reserve_screen_space: reserveScreenSpace,
           hide_native_taskbar: hideNativeTaskbar,
-          debug_inspector: debugInspector,
-          dreame_username: dreameUsername,
-          dreame_password: dreamePassword,
-          dreame_device_id: dreameDeviceId,
           homeassistant_url: haUrl,
           homeassistant_token: haToken,
           ha_calendar_entity_id: haCalendarEntityId,
@@ -132,32 +118,12 @@ export function useSettingsModel() {
     }
   };
 
-  const refreshDebugWindows = async () => {
-    try {
-      setDebugWindows(
-        await invoke<DebugWindowInfo[]>("get_window_debug_snapshot"),
-      );
-    } catch (error) {
-      setShellMessage(`Window snapshot failed: ${String(error)}`);
-    }
-  };
-
   const handleRestoreShell = async () => {
     try {
       await invoke("restore_shell_state");
       setShellMessage("Windows taskbar and work area restored.");
     } catch (error) {
       setShellMessage(`Restore failed: ${String(error)}`);
-    }
-  };
-
-  const handleClearIconCache = async () => {
-    try {
-      await invoke("clear_icon_cache");
-      await refreshDebugWindows();
-      setShellMessage("Icon cache cleared. Aeropeks will rebuild it on refresh.");
-    } catch (error) {
-      setShellMessage(`Icon cache clear failed: ${String(error)}`);
     }
   };
 
@@ -189,12 +155,6 @@ export function useSettingsModel() {
   return {
     accentColor,
     addShortcut,
-    debugInspector,
-    debugWindows,
-    dreameDeviceId,
-    dreamePassword,
-    dreameUsername,
-    handleClearIconCache,
     handleRestoreShell,
     handleSave,
     handleSearch,
@@ -209,7 +169,6 @@ export function useSettingsModel() {
     setUsageLimitsUrl,
     usageHiddenProviders,
     setUsageHiddenProviders,
-    refreshDebugWindows,
     removeShortcut,
     reserveScreenSpace,
     saved,
@@ -217,10 +176,6 @@ export function useSettingsModel() {
     searchResults,
     selectLocation,
     setAccentColor,
-    setDebugInspector,
-    setDreameDeviceId,
-    setDreamePassword,
-    setDreameUsername,
     setHaUrl,
     setHaToken,
     haCalendarEntityId,

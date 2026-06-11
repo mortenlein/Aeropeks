@@ -37,7 +37,6 @@ const formatTime = (date: Date, use24h: boolean) =>
   });
 
 export function useMenuBarModel() {
-  const [windowTitle, setWindowTitle] = useState("Aeropeks");
   const [mediaInfo, setMediaInfo] = useState<MediaInfo | null>(null);
   const [volume, setVolume] = useState(0.5);
   const [battery, setBattery] = useState<BatteryStatus | null>(null);
@@ -198,9 +197,6 @@ export function useMenuBarModel() {
       300000,
     );
     const unlisteners = [
-      listen<string>("window-change", ({ payload }) =>
-        setWindowTitle(payload || "Desktop"),
-      ),
       listen<MediaInfo | null>("media-change", ({ payload }) =>
         setMediaInfo(payload),
       ),
@@ -288,6 +284,5 @@ export function useMenuBarModel() {
     usageLimits,
     volume,
     weather,
-    windowTitle,
   };
 }

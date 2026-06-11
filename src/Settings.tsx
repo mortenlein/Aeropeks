@@ -147,12 +147,6 @@ function Settings() {
     setObsUrl,
     obsPassword,
     setObsPassword,
-    dreameUsername,
-    setDreameUsername,
-    dreamePassword,
-    setDreamePassword,
-    dreameDeviceId,
-    setDreameDeviceId,
     haUrl,
     setHaUrl,
     haToken,
@@ -164,12 +158,7 @@ function Settings() {
     hideNativeTaskbar,
     setHideNativeTaskbar,
     handleRestoreShell,
-    handleClearIconCache,
     shellMessage,
-    debugInspector,
-    setDebugInspector,
-    refreshDebugWindows,
-    debugWindows,
     accentColor,
     setAccentColor,
     use24h,
@@ -349,33 +338,6 @@ function Settings() {
               />
             </SetField>
 
-            <SetField label="Dreame Robot Mower" help="Cloud credentials for mower status. Device ID from the Dreame app.">
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1 }}>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <Inp
-                    value={dreameUsername}
-                    onChange={(e) => setDreameUsername(e.target.value)}
-                    placeholder="Dreame account email"
-                    style={{ flex: 2 }}
-                  />
-                  <Inp
-                    type="password"
-                    value={dreamePassword}
-                    onChange={(e) => setDreamePassword(e.target.value)}
-                    autoComplete="new-password"
-                    placeholder="Password"
-                    style={{ flex: 1.5 }}
-                  />
-                </div>
-                <Inp
-                  value={dreameDeviceId}
-                  onChange={(e) => setDreameDeviceId(e.target.value)}
-                  placeholder="Device ID (e.g. -110196586)"
-                  style={{ fontFamily: "var(--font-mono)" }}
-                />
-              </div>
-            </SetField>
-
             <SetField label="Home Assistant" help="Shows camera and robot status. Token from HA Profile → Long-Lived Access Tokens.">
               <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1 }}>
                 <Inp
@@ -422,61 +384,12 @@ function Settings() {
           />
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <Btn onClick={handleRestoreShell}>Restore Windows Shell</Btn>
-            <Btn onClick={handleClearIconCache}>Clear Icon Cache</Btn>
             <Btn onClick={() => invoke("open_demo_mode")}>Screenshot Mode</Btn>
           </div>
           {shellMessage && (
             <span style={{ fontSize: 11, color: T.t3 }}>{shellMessage}</span>
           )}
-          <SetCheck
-            on={debugInspector}
-            onChange={setDebugInspector}
-            label="Show window identity inspector"
-            help="Reveals AUMID, relaunch command, process path, and icon source when an app shows the wrong icon."
-          />
         </SetSection>
-
-        {/* Debug inspector */}
-        {debugInspector && (
-          <SetSection title="Window Identity Snapshot">
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: 12, color: T.t2 }}>Current taskbar windows</span>
-              <Btn onClick={refreshDebugWindows}>Refresh</Btn>
-            </div>
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", fontSize: 11, color: T.t2, borderCollapse: "collapse" }}>
-                <thead>
-                  <tr>
-                    {["App", "Title", "Class", "AUMID", "Relaunch", "Path", "Icon", "Why"].map((h) => (
-                      <th key={h} style={{ textAlign: "left", padding: "4px 6px", color: T.t3, fontWeight: 500, borderBottom: `1px solid ${T.divider}`, whiteSpace: "nowrap" }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {debugWindows.map((win) => (
-                    <tr key={win.hwnd}>
-                      <td style={{ padding: "4px 6px" }}>{win.app_name || "—"}</td>
-                      <td style={{ padding: "4px 6px", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={win.title}>{win.title}</td>
-                      <td style={{ padding: "4px 6px" }}>{win.class_name || "—"}</td>
-                      <td style={{ padding: "4px 6px", maxWidth: 100, overflow: "hidden", textOverflow: "ellipsis" }} title={win.app_id ?? ""}>{win.app_id || "—"}</td>
-                      <td style={{ padding: "4px 6px", maxWidth: 100, overflow: "hidden", textOverflow: "ellipsis" }} title={win.relaunch_command ?? win.relaunch_icon ?? ""}>{win.relaunch_command || win.relaunch_icon || "—"}</td>
-                      <td style={{ padding: "4px 6px", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis" }} title={win.process_path ?? ""}>{win.process_path || "—"}</td>
-                      <td style={{ padding: "4px 6px" }}>{win.icon_source || "—"}</td>
-                      <td style={{ padding: "4px 6px" }}>{win.inclusion_reason}</td>
-                    </tr>
-                  ))}
-                  {debugWindows.length === 0 && (
-                    <tr>
-                      <td colSpan={8} style={{ padding: "12px 6px", color: T.t3 }}>
-                        Click Refresh to capture the current window list.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </SetSection>
-        )}
 
         {/* Personalization */}
         <SetSection title="Personalization">

@@ -21,10 +21,6 @@ export interface AppSettings {
   use_24h: boolean;
   reserve_screen_space: boolean;
   hide_native_taskbar: boolean;
-  debug_inspector: boolean;
-  dreame_username: string;
-  dreame_password: string;
-  dreame_device_id: string;
   homeassistant_url: string;
   homeassistant_token: string;
   ha_calendar_entity_id: string;
@@ -108,20 +104,6 @@ export interface WeatherDetailed {
   place_name: string;
   hourly: HourlyForecast[];
   daily: DailyForecast[];
-}
-
-export interface DebugWindowInfo {
-  hwnd: number;
-  title: string;
-  app_name: string;
-  class_name: string;
-  process_path: string | null;
-  app_id: string | null;
-  relaunch_command: string | null;
-  relaunch_icon: string | null;
-  identity_key: string;
-  icon_source: string;
-  inclusion_reason: string;
 }
 
 export interface LocationResult {

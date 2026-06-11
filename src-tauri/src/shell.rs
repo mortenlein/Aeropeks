@@ -7,7 +7,7 @@ use tauri::{AppHandle, Manager, Window};
 use windows::Win32::Foundation::{HWND, LPARAM, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::UI::Shell::{
-    SHAppBarMessage, ABE_BOTTOM, ABE_TOP, ABM_NEW, ABM_QUERYPOS, ABM_SETPOS, APPBARDATA,
+    SHAppBarMessage, ABE_TOP, ABM_NEW, ABM_QUERYPOS, ABM_SETPOS, APPBARDATA,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetClassNameW, GetForegroundWindow, GetSystemMetrics, GetWindowLongW,
@@ -91,7 +91,7 @@ pub fn configure_main_window(
             // Nudge any windows whose title bar ended up behind the bar.
             nudge_stuck_windows();
             // Re-assert app bar position every 5 seconds.
-            if tick % 5 == 0 {
+            if tick.is_multiple_of(5) {
                 let _ = maintain_app_bar(&window);
             }
             tick = tick.wrapping_add(1);
@@ -250,11 +250,6 @@ pub fn restore(handle: &AppHandle) -> Result<(), String> {
     if let Some(window) = handle.get_webview_window("main") {
         if let Ok(hwnd) = window.hwnd() {
             cleanup_app_bar(HWND(hwnd.0), ABE_TOP);
-        }
-    }
-    if let Some(window) = handle.get_webview_window("taskbar-bottom") {
-        if let Ok(hwnd) = window.hwnd() {
-            cleanup_app_bar(HWND(hwnd.0), ABE_BOTTOM);
         }
     }
     set_native_taskbar_visible(true);

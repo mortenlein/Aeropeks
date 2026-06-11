@@ -12,7 +12,7 @@ tauri-build = { version = "2.0.0", features = [] }
 tauri = { version = "2", features = ["tray-icon"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-reqwest = { version = "0.12", features = ["blocking", "json"] }
+reqwest = { version = "0.12", features = ["json"] }
 base64 = "0.22"
 urlencoding = "2"
 portable-pty = "0.8"
@@ -20,24 +20,13 @@ windows = { version = "0.58.0", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Shell",
-    "Win32_UI_Shell_PropertiesSystem",
-    "Win32_UI_Accessibility",
-    "Win32_UI_Controls",
-    "Win32_UI_Input_KeyboardAndMouse",
-    "Win32_Graphics_Gdi",
     "Win32_Graphics_Dwm",
     "Win32_System_Com",
-    "Win32_System_Com_StructuredStorage",
     "Win32_System_Power",
     "Win32_System_SystemInformation",
-    "Win32_System_Threading",
-    "Win32_System_SystemServices",
     "Win32_System_Shutdown",
     "Win32_Security_Credentials",
-    "Win32_Storage",
-    "Win32_Storage_EnhancedStorage",
     "Win32_Storage_FileSystem",
-    "Win32_Storage_Xps",
     "Win32_Media_Audio",
     "Win32_Media_Audio_Endpoints",
     "Win32_Devices_Bluetooth",
@@ -50,12 +39,10 @@ windows = { version = "0.58.0", features = [
 walkdir = "2"
 open = "5"
 tauri-plugin-global-shortcut = "2.0.0"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["macros", "time"] }
 obws = "0.12"
-winvd = "0.0.48"
 log = "0.4"
 env_logger = "0.11"
-md5 = "0.7"
 
 [profile.release]
 panic = "abort"

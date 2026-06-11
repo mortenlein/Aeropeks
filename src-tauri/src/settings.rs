@@ -15,8 +15,9 @@ use windows::Win32::Security::Credentials::{
 const PLEX_TOKEN_TARGET: &str = "Aeropeks/PlexToken";
 const OBS_PASSWORD_TARGET: &str = "Aeropeks/ObsWebSocketPassword";
 const GITHUB_TOKEN_TARGET: &str = "Aeropeks/GitHubToken";
-const DREAME_PASSWORD_TARGET: &str = "Aeropeks/DreamePassword";
 const HA_TOKEN_TARGET: &str = "Aeropeks/HomeAssistantToken";
+/// Retired with the Dreame cloud integration; only used to purge old credentials.
+const RETIRED_DREAME_PASSWORD_TARGET: &str = "Aeropeks/DreamePassword";
 
 fn default_accent_color() -> String {
     "#22c55e".to_string()
@@ -35,10 +36,6 @@ fn default_reserve_screen_space() -> bool {
 }
 
 fn default_hide_native_taskbar() -> bool {
-    false
-}
-
-fn default_debug_inspector() -> bool {
     false
 }
 
@@ -106,14 +103,6 @@ pub struct AppSettings {
     pub reserve_screen_space: bool,
     #[serde(default = "default_hide_native_taskbar")]
     pub hide_native_taskbar: bool,
-    #[serde(default = "default_debug_inspector")]
-    pub debug_inspector: bool,
-    #[serde(default)]
-    pub dreame_username: String,
-    #[serde(default)]
-    pub dreame_password: String,
-    #[serde(default)]
-    pub dreame_device_id: String,
     #[serde(default)]
     pub homeassistant_url: String,
     #[serde(default)]
@@ -140,10 +129,6 @@ impl Default for AppSettings {
             use_24h: true,
             reserve_screen_space: true,
             hide_native_taskbar: false,
-            debug_inspector: false,
-            dreame_username: String::new(),
-            dreame_password: String::new(),
-            dreame_device_id: String::new(),
             homeassistant_url: String::new(),
             homeassistant_token: String::new(),
             ha_calendar_entity_id: String::new(),
@@ -157,7 +142,6 @@ impl AppSettings {
         settings.plex_token.clear();
         settings.obs_websocket_password.clear();
         settings.github_token.clear();
-        settings.dreame_password.clear();
         settings.homeassistant_token.clear();
         settings
     }
@@ -221,14 +205,13 @@ pub fn load(handle: &tauri::AppHandle) -> AppSettings {
         .ok()
         .flatten()
         .unwrap_or(plaintext_github);
-    settings.dreame_password = read_secret(DREAME_PASSWORD_TARGET)
-        .ok()
-        .flatten()
-        .unwrap_or_default();
     settings.homeassistant_token = read_secret(HA_TOKEN_TARGET)
         .ok()
         .flatten()
         .unwrap_or_default();
+
+    // One-time cleanup of the credential left behind by the removed Dreame integration.
+    let _ = restore_secret(RETIRED_DREAME_PASSWORD_TARGET, None);
 
     if persist_secrets(&settings).is_ok() {
         let _ = write_file(&path, &settings);
@@ -240,7 +223,6 @@ pub fn save(handle: &tauri::AppHandle, settings: &AppSettings) -> Result<(), Str
     let previous_plex = read_secret(PLEX_TOKEN_TARGET)?;
     let previous_obs = read_secret(OBS_PASSWORD_TARGET)?;
     let previous_github = read_secret(GITHUB_TOKEN_TARGET)?;
-    let previous_dreame = read_secret(DREAME_PASSWORD_TARGET)?;
     let previous_ha = read_secret(HA_TOKEN_TARGET)?;
     let path = settings_path(handle)?;
 
@@ -249,12 +231,11 @@ pub fn save(handle: &tauri::AppHandle, settings: &AppSettings) -> Result<(), Str
         let rollback_plex = restore_secret(PLEX_TOKEN_TARGET, previous_plex.as_deref());
         let rollback_obs = restore_secret(OBS_PASSWORD_TARGET, previous_obs.as_deref());
         let rollback_github = restore_secret(GITHUB_TOKEN_TARGET, previous_github.as_deref());
-        let rollback_dreame = restore_secret(DREAME_PASSWORD_TARGET, previous_dreame.as_deref());
         let rollback_ha = restore_secret(HA_TOKEN_TARGET, previous_ha.as_deref());
-        return match (rollback_plex, rollback_obs, rollback_github, rollback_dreame, rollback_ha) {
-            (Ok(()), Ok(()), Ok(()), Ok(()), Ok(())) => Err(error),
-            (plex, obs, github, dreame, ha) => Err(format!(
-                "{error}; credential rollback failed: plex={plex:?}, obs={obs:?}, github={github:?}, dreame={dreame:?}, ha={ha:?}"
+        return match (rollback_plex, rollback_obs, rollback_github, rollback_ha) {
+            (Ok(()), Ok(()), Ok(()), Ok(())) => Err(error),
+            (plex, obs, github, ha) => Err(format!(
+                "{error}; credential rollback failed: plex={plex:?}, obs={obs:?}, github={github:?}, ha={ha:?}"
             )),
         };
     }
@@ -265,7 +246,6 @@ fn persist_secrets(settings: &AppSettings) -> Result<(), String> {
     write_secret(PLEX_TOKEN_TARGET, &settings.plex_token)?;
     write_secret(OBS_PASSWORD_TARGET, &settings.obs_websocket_password)?;
     write_secret(GITHUB_TOKEN_TARGET, &settings.github_token)?;
-    write_secret(DREAME_PASSWORD_TARGET, &settings.dreame_password)?;
     write_secret(HA_TOKEN_TARGET, &settings.homeassistant_token)
 }
 
@@ -377,6 +357,9 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    // Secrets travel to the settings window over IPC by design (so they are
+    // editable there); every persisted or broadcast copy must go through
+    // without_secrets() first. This guards the value-stripping contract.
     #[test]
     fn serialized_settings_exclude_secrets() {
         let settings = AppSettings {
@@ -385,12 +368,10 @@ mod tests {
             ..AppSettings::default()
         };
 
-        let serialized = serde_json::to_string(&settings).unwrap();
+        let serialized = serde_json::to_string(&settings.without_secrets()).unwrap();
 
         assert!(!serialized.contains("plex-secret"));
         assert!(!serialized.contains("obs-secret"));
-        assert!(!serialized.contains("plex_token"));
-        assert!(!serialized.contains("obs_websocket_password"));
     }
 
     #[test]
@@ -452,7 +433,6 @@ mod tests {
             "use_24h",
             "reserve_screen_space",
             "hide_native_taskbar",
-            "debug_inspector",
             "homeassistant_url",
             "homeassistant_token",
         ] {

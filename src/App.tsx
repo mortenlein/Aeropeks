@@ -12,7 +12,7 @@ import { PhonePopover } from "./PhonePopover";
 import { CalendarPopover } from "./CalendarPopover";
 import {
   BarGroup, BarDivider, BarChip, BarItem, TrayIcon,
-  MowerGlyph, SourceTag, Panel, KV, Mono, Micro, PBar,
+  MowerGlyph, SourceTag, Panel, KV, Mono, PBar,
 } from "./atoms";
 import { Icon } from "./icons";
 import { HUE, T } from "./tokens";
@@ -453,24 +453,6 @@ function App() {
                       <span style={{ position: 'absolute', left: `${volPct}%`, transform: 'translateX(-50%)', width: 13, height: 13, borderRadius: 999, background: T.t1, boxShadow: '0 2px 6px rgba(0,0,0,0.5)', pointerEvents: 'none' }} />
                     </div>
                     <Mono size={11.5} w={600} style={{ width: 24, textAlign: 'right' }}>{volPct}</Mono>
-                  </div>
-                  {/* Device list */}
-                  <Micro style={{ margin: '16px 0 6px' }}>Output</Micro>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    {[
-                      { icon: <Icon name="vol" size={12} />, name: 'Speakers', sub: 'Realtek HD Audio', active: true },
-                      { icon: <Icon name="phones" size={12} />, name: 'Headphones', sub: 'Bluetooth', active: false },
-                      { icon: <Icon name="monitor" size={12} />, name: 'Monitor', sub: 'HDMI', active: false },
-                    ].map(({ icon, name, sub, active }) => (
-                      <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: T.ctlR, background: active ? T.ctlBg : 'transparent', cursor: 'pointer' }}>
-                        <span style={{ color: active ? 'var(--accent)' : T.t3, display: 'flex', flexShrink: 0 }}>{icon}</span>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 12, fontWeight: active ? 600 : 400, color: active ? T.t1 : T.t2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</div>
-                          <Mono size={9} color={T.t3}>{sub}</Mono>
-                        </div>
-                        {active && <span style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--accent)', boxShadow: '0 0 6px var(--accent)', flexShrink: 0 }} />}
-                      </div>
-                    ))}
                   </div>
                 </Panel>
               )}

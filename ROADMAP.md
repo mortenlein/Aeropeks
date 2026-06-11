@@ -56,21 +56,27 @@ Module inventory: `usage-limits`, `projects`, `media`, `weather`, `camera`, `vac
 
 ---
 
-## Phase 1 — Cleanup (remove dead weight first)
+## Phase 1 — Cleanup (remove dead weight first) ✅ DONE 2026-06-11
 
-- [ ] Delete the `native_windows` taskbar subsystem + both background threads
+- [x] Delete the `native_windows` taskbar subsystem + both background threads
       (`get_open_windows`, thumbnails, focus/close, icon cache, virtual desktops,
-      foreground-title thread, debug inspector UI). *Git history preserves it if a
-      dock module is ever wanted again — decision point flagged below.*
-- [ ] Delete `dreame.rs`, `DreameTokenCache`, `dreame_get_status`, the three
-      `dreame_*` settings fields, the Credential Manager target, and the Settings card.
-- [ ] Purge dead CSS from `index.css` (~200 unreferenced classes; keep layout,
-      fonts, vars, keyframes, terminal/launcher/demo styles that are still used).
-- [ ] Replace the hardcoded audio-device list in the volume popover with real
-      endpoint enumeration (`IMMDeviceEnumerator`) — or drop the list until then.
-- [ ] Trim Cargo features: `tokio` to needed features, drop `reqwest/blocking` if
-      unused, prune `windows` features freed by the taskbar deletion.
-- [ ] Lower the media fallback poll to 30s (GSMTC events remain the primary signal).
+      foreground-title thread, debug inspector UI). Decision: the dock was a bust;
+      deleted outright — git history preserves it.
+- [x] Delete `dreame.rs`, `DreameTokenCache`, `dreame_get_status`, the three
+      `dreame_*` settings fields, and the Settings card. The old Credential
+      Manager entry is purged once on next settings load.
+- [x] Purge dead CSS from `index.css` (2,638 → ~440 lines).
+- [x] Drop the hardcoded audio-device list in the volume popover. Real endpoint
+      enumeration (`IMMDeviceEnumerator`) is a future module feature.
+- [x] Trim Cargo: removed `winvd` + `md5` crates, `reqwest/blocking`, `tokio`
+      full→macros+time, 11 unused `windows` features.
+- [x] Lower the media fallback poll to 30s (GSMTC events remain the primary signal).
+
+*Finding during Phase 1: the `skip_serializing` attributes on secret settings
+fields (from the original hardening) were lost at some point. All runtime paths
+still strip secrets via `without_secrets()` (disk, broadcast, non-settings
+windows), and the settings window receives secrets over IPC by design. The
+settings test now guards the `without_secrets()` contract instead.*
 
 ## Phase 2 — Module config schema
 
@@ -113,7 +119,7 @@ Module inventory: `usage-limits`, `projects`, `media`, `weather`, `camera`, `vac
 
 ### Open decisions
 
-- **Taskbar/dock**: deleted in Phase 1 (recommended) or kept and revived as a module?
-  The redesigned bar has no window list; the subsystem is the app's largest idle cost.
+- ~~**Taskbar/dock**: deleted in Phase 1 or kept as a module?~~ → Deleted (2026-06-11);
+  it wasn't viable at this stage. Git history has it if ever revisited.
 - **HA transport**: bulk REST polling (simple, Phase 4 baseline) vs WebSocket push
   (best, more moving parts). Roadmap does REST first, WebSocket as stretch.
