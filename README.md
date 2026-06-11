@@ -2,7 +2,9 @@
 
 A premium macOS-style top menu bar for Windows, built with Tauri 2, React, and Rust.
 
-Aeropeks replaces the visual clutter of the Windows taskbar era with a single 40px bar at the top of your screen: system status, now playing, weather, smart-home status, and a drop-down terminal — all configurable as independent modules you can switch on or off.
+Aeropeks replaces the visual clutter of the Windows taskbar era with a single 40px bar at the top of your screen: system status, now playing, weather, smart-home status, pinned shortcuts, and a drop-down terminal — all configurable as independent modules you can switch on or off.
+
+![The Aeropeks bar](docs/screenshots/bar.png)
 
 ## Modules
 
@@ -10,6 +12,7 @@ Everything outside the core system tray is a module. Open **Settings → Bar Mod
 
 | Module | What it shows | Configuration |
 | --- | --- | --- |
+| Shortcuts | Up to 8 pinned websites with their real favicons in a dropdown | Managed from the bar — paste a URL, optionally name it, edit inline |
 | Now Playing | Track + media controls (Windows GSMTC, with Plex fallback) | Optional Plex URL + token |
 | Weather | Current temp in the bar, hourly/daily forecast popover (met.no) | Search your city in Settings |
 | AI Usage Limits | Per-provider chips tracking the 5-hour rate-limit window | URL of a usage-limits service endpoint |
@@ -22,6 +25,16 @@ Everything outside the core system tray is a module. Open **Settings → Bar Mod
 | Calendar | Next event in the bar, 7-day agenda popover | HA calendar entity |
 
 Always available: volume slider, Bluetooth devices, mic mute, privacy mode (mic + camera block), battery, drop-down terminal with SSH shortcuts and global hotkeys, Alt+Space launcher, power menu, clock.
+
+### Shortcuts
+
+Pin the sites you live in — including self-hosted ones. Favicons are discovered the way a
+browser does it: the backend fetches the site's homepage and follows its declared
+`<link rel="icon">` (so dashboards like Frigate or Home Assistant get their real icons),
+falling back to `/favicon.ico` on the same origin and finally Google's favicon service for
+public sites. Icons are cached to disk, fetched entirely through the backend (the webview's
+CSP blocks external images), and a pinned site can only ever be opened by its saved,
+validated entry — never an arbitrary URL.
 
 ### Home Assistant integration
 
