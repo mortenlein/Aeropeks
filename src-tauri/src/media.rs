@@ -35,14 +35,14 @@ pub fn select_active(local: Option<MediaInfo>, remote: Option<MediaInfo>) -> Opt
     }
 }
 
-async fn fetch_plex_media(plex_url: &str, plex_token: &str) -> Option<MediaInfo> {
+async fn fetch_plex_media(
+    client: &reqwest::Client,
+    plex_url: &str,
+    plex_token: &str,
+) -> Option<MediaInfo> {
     if plex_url.is_empty() {
         return None;
     }
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(3))
-        .build()
-        .ok()?;
     let response = client
         .get(format!(
             "{}/status/sessions?X-Plex-Token={}",
@@ -50,6 +50,7 @@ async fn fetch_plex_media(plex_url: &str, plex_token: &str) -> Option<MediaInfo>
             plex_token
         ))
         .header("Accept", "application/json")
+        .timeout(Duration::from_secs(3))
         .send()
         .await
         .ok()?;
@@ -175,7 +176,8 @@ pub async fn active_media(handle: tauri::AppHandle) -> Result<Option<MediaInfo>,
             let settings = state.lock().map_err(|e| e.to_string())?;
             (settings.plex_url.clone(), settings.plex_token.clone())
         };
-        select_active(local, fetch_plex_media(&url, &token).await)
+        let client = crate::http::client(&handle);
+        select_active(local, fetch_plex_media(&client, &url, &token).await)
     };
     *handle
         .state::<MediaState>()
@@ -198,6 +200,7 @@ pub async fn get_media_info_unified(
 pub async fn get_album_art(
     thumb: String,
     state: tauri::State<'_, SharedSettings>,
+    http: tauri::State<'_, crate::http::HttpClient>,
     window: Window,
 ) -> Result<String, String> {
     security::require_window(&window, &["expanded-player"])?;
@@ -214,11 +217,10 @@ pub async fn get_album_art(
         urlencoding::encode(&thumb),
         plex_token
     );
-    let bytes = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
-        .map_err(|e| e.to_string())?
+    let bytes = http
+        .0
         .get(url)
+        .timeout(Duration::from_secs(5))
         .send()
         .await
         .and_then(|response| response.error_for_status())
@@ -231,6 +233,7 @@ pub async fn get_album_art(
 }
 
 async fn plex_control(
+    client: reqwest::Client,
     action: &str,
     is_playing: bool,
     machine_id: &str,
@@ -259,10 +262,6 @@ async fn plex_control(
     if !address.is_empty() {
         attempts.push((format!("http://{address}:32500/player/playback/{command}?commandID={command_id}&X-Plex-Token={token}"), true));
     }
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(3))
-        .build()
-        .map_err(|e| e.to_string())?;
     for (url, post) in attempts {
         let request = if post {
             client.post(url)
@@ -270,6 +269,7 @@ async fn plex_control(
             client.get(url)
         };
         if request
+            .timeout(Duration::from_secs(3))
             .header("X-Plex-Client-Identifier", "aeropeks")
             .header("X-Plex-Target-Client-Identifier", machine_id)
             .send()
@@ -338,6 +338,7 @@ pub async fn media_control_unified(
     };
     let result = if media.source == "plex" {
         plex_control(
+            crate::http::client(&handle),
             &action,
             media.is_playing,
             media.machine_id.as_deref().unwrap_or_default(),

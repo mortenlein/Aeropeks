@@ -109,15 +109,24 @@ settings test now guards the `without_secrets()` contract instead.*
       mechanism; screenshot mode forces its three popovers open via a flag.
 - [ ] Optional (deferred): user-configurable module order within sections.
 
-## Phase 4 — Backend optimization
+## Phase 4 — Backend optimization ✅ DONE 2026-06-11
 
-- [ ] Shared `reqwest::Client` in managed state (connection reuse for all HTTP).
-- [ ] Replace the three bespoke HA commands with one `get_ha_states(entity_ids)`
-      command validated against the configured module entities, fetched via the bulk
-      `/api/states` endpoint (1 request instead of N).
-- [ ] Stretch: HA WebSocket `subscribe_entities` — backend pushes
-      `ha-state-changed` events; frontend HA intervals go away entirely.
-- [ ] Per-module poll cadence in module config.
+- [x] Shared `reqwest::Client` (`http.rs`) in managed state — one connection pool
+      for HA, weather, location search, usage limits, GitHub, and Plex
+      (media/control/album art); per-request timeouts replace per-call clients.
+- [x] New `ha.rs`: a backend poller fetches the bulk `/api/states` endpoint once
+      per cycle and derives vacuum + mower + phone statuses from that single
+      response (was ~23 entity GETs/min, now 2 bulk GETs/min at default cadence).
+      The snapshot is cached (`get_ha_snapshot` serves it on startup) and pushed
+      to the bar via `ha-snapshot` events — the three frontend HA intervals are
+      gone. Saving settings nudges the poller (`tokio::sync::Notify`) so module
+      changes apply immediately; HA outages keep the last snapshot instead of
+      flickering items away. Calendar/camera remain on-demand commands using the
+      shared client.
+- [ ] Stretch (deferred): HA WebSocket `subscribe_entities` push transport.
+- [x] Poll cadence: `homeassistant_poll_seconds` setting (default 30, clamped
+      5–600) drives the poller; exposed in Settings. Per-module cadence was
+      dropped — with one bulk fetch there is a single meaningful knob.
 
 ## Phase 5 — Generalization & release
 

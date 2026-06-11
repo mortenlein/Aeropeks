@@ -31,6 +31,7 @@ export function useSettingsModel() {
   const [shellMessage, setShellMessage] = useState("");
   const [haUrl, setHaUrl] = useState("");
   const [haToken, setHaToken] = useState("");
+  const [haPollSeconds, setHaPollSeconds] = useState(30);
   const [modules, setModules] = useState<ModulesConfig>(defaultModules());
 
   useEffect(() => {
@@ -54,6 +55,7 @@ export function useSettingsModel() {
         setHideNativeTaskbar(settings.hide_native_taskbar);
         setHaUrl(settings.homeassistant_url);
         setHaToken(settings.homeassistant_token);
+        setHaPollSeconds(settings.homeassistant_poll_seconds ?? 30);
         setModules(settings.modules ?? defaultModules());
       })
       .catch((error) => setShellMessage(`Settings load failed: ${String(error)}`));
@@ -107,6 +109,7 @@ export function useSettingsModel() {
           hide_native_taskbar: hideNativeTaskbar,
           homeassistant_url: haUrl,
           homeassistant_token: haToken,
+          homeassistant_poll_seconds: haPollSeconds,
           modules,
         },
       });
@@ -189,6 +192,8 @@ export function useSettingsModel() {
     setAccentColor,
     setHaUrl,
     setHaToken,
+    haPollSeconds,
+    setHaPollSeconds,
     modules,
     updateModule,
     setHideNativeTaskbar,

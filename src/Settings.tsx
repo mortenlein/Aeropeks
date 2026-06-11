@@ -151,6 +151,8 @@ function Settings() {
     setHaUrl,
     haToken,
     setHaToken,
+    haPollSeconds,
+    setHaPollSeconds,
     modules,
     updateModule,
     reserveScreenSpace,
@@ -354,6 +356,17 @@ function Settings() {
                   placeholder="Long-lived access token"
                   style={{ fontFamily: "var(--font-mono)" }}
                 />
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <Inp
+                    type="number"
+                    min={5}
+                    max={600}
+                    value={haPollSeconds}
+                    onChange={(e) => setHaPollSeconds(Math.max(5, Math.min(600, Number(e.target.value) || 30)))}
+                    style={{ flex: "none", width: 80, fontFamily: "var(--font-mono)" }}
+                  />
+                  <span style={{ fontSize: 11, color: T.t3 }}>seconds between status polls</span>
+                </div>
               </div>
             </SetField>
           </div>

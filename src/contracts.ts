@@ -69,7 +69,15 @@ export interface AppSettings {
   hide_native_taskbar: boolean;
   homeassistant_url: string;
   homeassistant_token: string;
+  homeassistant_poll_seconds: number;
   modules: ModulesConfig;
+}
+
+/** Pushed by the backend HA poller via the "ha-snapshot" event. */
+export interface HaSnapshot {
+  vacuum: VacuumStatus | null;
+  mower: MowerStatus | null;
+  phone: PhoneStatus | null;
 }
 
 export interface VacuumStatus {

@@ -1,6 +1,8 @@
 // Aeropeks v0.1.0 - Terminal Fix Build
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod ha;
+mod http;
 mod integrations;
 mod launcher;
 mod media;
@@ -92,6 +94,9 @@ fn save_settings(
     if previous_settings.reserve_screen_space && !settings.reserve_screen_space {
         let _ = shell::restore(&handle);
     }
+
+    // Wake the HA poller so module changes apply without waiting a cycle.
+    handle.state::<ha::HaRefresh>().0.notify_one();
 
     Ok(())
 }
@@ -346,418 +351,6 @@ fn toggle_terminal_panel_internal(handle: &tauri::AppHandle) {
     }
 }
 
-#[derive(Serialize, Clone)]
-struct VacuumStatus {
-    state: String,
-    battery: u8,
-    charging: bool,
-    cleaning: bool,
-    cleaning_progress: u8,
-    status: String,
-    selected_map: String,
-}
-
-async fn ha_fetch_state(client: &reqwest::Client, base: &str, auth: &str, entity: &str) -> String {
-    #[derive(serde::Deserialize)]
-    struct Resp { state: String }
-    (async {
-        Ok::<_, reqwest::Error>(
-            client
-                .get(format!("{base}/api/states/{entity}"))
-                .header("Authorization", auth)
-                .send()
-                .await?
-                .json::<Resp>()
-                .await?
-                .state
-        )
-    })
-    .await
-    .unwrap_or_default()
-}
-
-#[tauri::command]
-async fn get_ha_vacuum_status(
-    window: Window,
-    state: tauri::State<'_, SharedSettings>,
-) -> Result<Option<VacuumStatus>, String> {
-    security::require_window(&window, &["main"])?;
-
-    let (url, token, module) = {
-        let s = state.lock().map_err(|e| e.to_string())?;
-        (
-            s.homeassistant_url.clone(),
-            s.homeassistant_token.clone(),
-            s.modules.vacuum.clone(),
-        )
-    };
-
-    if !module.enabled || module.entity_id.is_empty() || url.is_empty() || token.is_empty() {
-        return Ok(None);
-    }
-    security::validate_ha_entity_id(&module.entity_id)?;
-    let obj = module.entity_id.split_once('.').map(|(_, o)| o).unwrap_or_default();
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(8))
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let base = url.trim_end_matches('/');
-    let auth = format!("Bearer {token}");
-
-    let e_battery = format!("sensor.{obj}_battery");
-    let e_status = format!("sensor.{obj}_status");
-    let e_charging = format!("binary_sensor.{obj}_charging");
-    let e_cleaning = format!("binary_sensor.{obj}_cleaning");
-    let e_progress = format!("sensor.{obj}_cleaning_progress");
-    let e_map = format!("select.{obj}_selected_map");
-    let (vac, bat, stat, chg, cln, prg, map) = tokio::join!(
-        ha_fetch_state(&client, base, &auth, &module.entity_id),
-        ha_fetch_state(&client, base, &auth, &e_battery),
-        ha_fetch_state(&client, base, &auth, &e_status),
-        ha_fetch_state(&client, base, &auth, &e_charging),
-        ha_fetch_state(&client, base, &auth, &e_cleaning),
-        ha_fetch_state(&client, base, &auth, &e_progress),
-        ha_fetch_state(&client, base, &auth, &e_map),
-    );
-
-    Ok(Some(VacuumStatus {
-        state: vac,
-        battery: bat.parse().unwrap_or(0),
-        charging: chg == "on",
-        cleaning: cln == "on",
-        cleaning_progress: prg.parse().unwrap_or(0),
-        status: stat,
-        selected_map: map,
-    }))
-}
-
-#[derive(Serialize, Clone)]
-struct HaMowerStatus {
-    state: String,
-    state_label: String,
-    firmware: String,
-    cleaning_count: u32,
-    total_area_m2: u32,
-    total_time_min: u32,
-    dnd: bool,
-    zone_id: String,
-    zone_state: String,
-    has_update: bool,
-}
-
-#[tauri::command]
-async fn get_mower_status(
-    window: Window,
-    state: tauri::State<'_, SharedSettings>,
-) -> Result<Option<HaMowerStatus>, String> {
-    security::require_window(&window, &["main"])?;
-
-    let (url, token, module) = {
-        let s = state.lock().map_err(|e| e.to_string())?;
-        (
-            s.homeassistant_url.clone(),
-            s.homeassistant_token.clone(),
-            s.modules.mower.clone(),
-        )
-    };
-
-    if !module.enabled || module.entity_id.is_empty() || url.is_empty() || token.is_empty() {
-        return Ok(None);
-    }
-    security::validate_ha_entity_id(&module.entity_id)?;
-    if !module.update_entity_id.is_empty() {
-        security::validate_ha_entity_id(&module.update_entity_id)?;
-    }
-    let obj = module.entity_id.split_once('.').map(|(_, o)| o).unwrap_or_default();
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(8))
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let base = url.trim_end_matches('/');
-    let auth = format!("Bearer {token}");
-
-    let update_fut = async {
-        if module.update_entity_id.is_empty() {
-            String::new()
-        } else {
-            ha_fetch_state(&client, base, &auth, &module.update_entity_id).await
-        }
-    };
-    let e_firmware = format!("sensor.{obj}_firmware_version");
-    let e_count = format!("sensor.{obj}_cleaning_count");
-    let e_area = format!("sensor.{obj}_total_cleaned_area");
-    let e_time = format!("sensor.{obj}_total_cleaning_time");
-    let e_dnd = format!("switch.{obj}_dnd");
-    let e_zone_id = format!("sensor.{obj}_current_zone_id");
-    let e_zone_state = format!("sensor.{obj}_current_zone_state");
-    let (lm, fw, count, area, time_min, dnd, zone_id, zone_state, upd) = tokio::join!(
-        ha_fetch_state(&client, base, &auth, &module.entity_id),
-        ha_fetch_state(&client, base, &auth, &e_firmware),
-        ha_fetch_state(&client, base, &auth, &e_count),
-        ha_fetch_state(&client, base, &auth, &e_area),
-        ha_fetch_state(&client, base, &auth, &e_time),
-        ha_fetch_state(&client, base, &auth, &e_dnd),
-        ha_fetch_state(&client, base, &auth, &e_zone_id),
-        ha_fetch_state(&client, base, &auth, &e_zone_state),
-        update_fut,
-    );
-
-    let state_label = match lm.as_str() {
-        "mowing" => "Mowing",
-        "docked" => "Docked",
-        "paused" => "Paused",
-        "error" => "Error",
-        _ => "Unknown",
-    }.to_string();
-
-    Ok(Some(HaMowerStatus {
-        state: lm,
-        state_label,
-        firmware: fw,
-        cleaning_count: count.parse().unwrap_or(0),
-        total_area_m2: area.parse().unwrap_or(0),
-        total_time_min: time_min.parse().unwrap_or(0),
-        dnd: dnd == "on",
-        zone_id,
-        zone_state,
-        has_update: upd == "on",
-    }))
-}
-
-#[derive(Serialize, Clone)]
-struct PhoneStatus {
-    battery: u8,
-    charging: bool,
-    battery_state: String,
-    charge_time_min: i32,
-    at_home: bool,
-    wifi_ssid: String,
-    activity: String,
-}
-
-#[tauri::command]
-async fn get_ha_phone_status(
-    window: Window,
-    state: tauri::State<'_, SharedSettings>,
-) -> Result<Option<PhoneStatus>, String> {
-    security::require_window(&window, &["main"])?;
-
-    let (url, token, module) = {
-        let s = state.lock().map_err(|e| e.to_string())?;
-        (
-            s.homeassistant_url.clone(),
-            s.homeassistant_token.clone(),
-            s.modules.phone.clone(),
-        )
-    };
-
-    if !module.enabled || module.device_slug.is_empty() || url.is_empty() || token.is_empty() {
-        return Ok(None);
-    }
-    security::validate_ha_slug(&module.device_slug)?;
-    let slug = &module.device_slug;
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(8))
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let base = url.trim_end_matches('/');
-    let auth = format!("Bearer {token}");
-
-    let e_battery = format!("sensor.{slug}_battery_level");
-    let e_bat_state = format!("sensor.{slug}_battery_state");
-    let e_charging = format!("binary_sensor.{slug}_is_charging");
-    let e_charge_time = format!("sensor.{slug}_remaining_charge_time");
-    let e_tracker = format!("device_tracker.{slug}");
-    let e_wifi = format!("sensor.{slug}_wifi_connection");
-    let e_activity = format!("sensor.{slug}_activity");
-    let (bat, bat_state, is_charging, charge_time, tracker, wifi, activity) = tokio::join!(
-        ha_fetch_state(&client, base, &auth, &e_battery),
-        ha_fetch_state(&client, base, &auth, &e_bat_state),
-        ha_fetch_state(&client, base, &auth, &e_charging),
-        ha_fetch_state(&client, base, &auth, &e_charge_time),
-        ha_fetch_state(&client, base, &auth, &e_tracker),
-        ha_fetch_state(&client, base, &auth, &e_wifi),
-        ha_fetch_state(&client, base, &auth, &e_activity),
-    );
-
-    let charging = is_charging == "on" || matches!(bat_state.as_str(), "charging" | "full");
-
-    Ok(Some(PhoneStatus {
-        battery: bat.parse().unwrap_or(0),
-        charging,
-        battery_state: bat_state,
-        charge_time_min: charge_time.parse().unwrap_or(-1),
-        at_home: tracker == "home",
-        wifi_ssid: wifi,
-        activity,
-    }))
-}
-
-#[derive(Serialize, Clone, Debug)]
-struct CalendarEvent {
-    summary: String,
-    start: String,
-    end: String,
-    all_day: bool,
-    description: String,
-    location: String,
-}
-
-#[tauri::command]
-async fn get_calendar_events(
-    start: String,
-    end: String,
-    window: Window,
-    state: tauri::State<'_, SharedSettings>,
-) -> Result<Option<Vec<CalendarEvent>>, String> {
-    security::require_window(&window, &["main"])?;
-
-    let (url, token, module) = {
-        let s = state.lock().map_err(|e| e.to_string())?;
-        (
-            s.homeassistant_url.clone(),
-            s.homeassistant_token.clone(),
-            s.modules.calendar.clone(),
-        )
-    };
-
-    if !module.enabled || module.entity_id.is_empty() || url.is_empty() || token.is_empty() {
-        return Ok(None);
-    }
-    security::validate_ha_entity_id(&module.entity_id)?;
-    let entity_id = module.entity_id;
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(8))
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let base = url.trim_end_matches('/');
-    let api_url = format!(
-        "{}/api/calendars/{}?start={}&end={}",
-        base,
-        entity_id,
-        urlencoding::encode(&start),
-        urlencoding::encode(&end),
-    );
-
-    let resp = client
-        .get(&api_url)
-        .header("Authorization", format!("Bearer {token}"))
-        .header("Content-Type", "application/json")
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if !resp.status().is_success() {
-        return Ok(Some(Vec::new()));
-    }
-
-    let raw: Vec<serde_json::Value> = resp.json().await.map_err(|e| e.to_string())?;
-
-    let events = raw
-        .iter()
-        .filter_map(|e| {
-            let start_obj = e.get("start")?;
-            let end_obj = e.get("end")?;
-
-            let (start_str, all_day) =
-                if let Some(dt) = start_obj.get("dateTime").and_then(|v| v.as_str()) {
-                    (dt.to_string(), false)
-                } else if let Some(d) = start_obj.get("date").and_then(|v| v.as_str()) {
-                    (d.to_string(), true)
-                } else {
-                    return None;
-                };
-
-            let end_str = if let Some(dt) = end_obj.get("dateTime").and_then(|v| v.as_str()) {
-                dt.to_string()
-            } else {
-                end_obj
-                    .get("date")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string()
-            };
-
-            Some(CalendarEvent {
-                summary: e
-                    .get("summary")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                start: start_str,
-                end: end_str,
-                all_day,
-                description: e
-                    .get("description")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                location: e
-                    .get("location")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-            })
-        })
-        .collect();
-
-    Ok(Some(events))
-}
-
-#[tauri::command]
-async fn get_ha_camera_snapshot(
-    window: Window,
-    state: tauri::State<'_, SharedSettings>,
-) -> Result<String, String> {
-    security::require_window(&window, &["main"])?;
-
-    let (url, token, module) = {
-        let s = state.lock().map_err(|e| e.to_string())?;
-        (
-            s.homeassistant_url.clone(),
-            s.homeassistant_token.clone(),
-            s.modules.camera.clone(),
-        )
-    };
-
-    if !module.enabled || module.entity_id.is_empty() || url.is_empty() || token.is_empty() {
-        return Err("Home Assistant camera not configured".to_string());
-    }
-    security::validate_ha_entity_id(&module.entity_id)?;
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(8))
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let response = client
-        .get(format!(
-            "{}/api/camera_proxy/{}",
-            url.trim_end_matches('/'),
-            module.entity_id
-        ))
-        .header("Authorization", format!("Bearer {token}"))
-        .send()
-        .await
-        .map_err(|e| format!("Camera request failed: {e}"))?;
-
-    if !response.status().is_success() {
-        return Err(format!("Camera returned {}", response.status()));
-    }
-
-    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
-    use base64::{Engine as _, engine::general_purpose};
-    Ok(general_purpose::STANDARD.encode(&bytes))
-}
-
 // ── Main ────────────────────────────────────────────────────────────
 
 fn main() {
@@ -773,6 +366,9 @@ fn main() {
 
     tauri::Builder::default()
         .manage(shared.clone())
+        .manage(http::HttpClient::new())
+        .manage(ha::HaState::default())
+        .manage(ha::HaRefresh::default())
         .manage(media::MediaState::default())
         .manage(system_status::PrivacyState::default())
         .manage(terminal_state)
@@ -811,6 +407,7 @@ fn main() {
             }
 
             shell::set_native_taskbar_visible(!initial_settings.hide_native_taskbar);
+            ha::start_poller(app.handle().clone(), shutdown.clone());
 
             if let Some(window) = app.get_webview_window("main") {
                 shell::configure_main_window(
@@ -995,11 +592,9 @@ fn main() {
             shell::restore_shell_state,
             open_demo_mode,
             exit_demo_mode,
-            get_ha_camera_snapshot,
-            get_ha_vacuum_status,
-            get_mower_status,
-            get_ha_phone_status,
-            get_calendar_events
+            ha::get_ha_camera_snapshot,
+            ha::get_ha_snapshot,
+            ha::get_calendar_events
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

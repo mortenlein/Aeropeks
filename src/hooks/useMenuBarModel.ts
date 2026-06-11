@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   AppSettings,
   CalendarEvent,
+  HaSnapshot,
   LimitsSnapshot,
   MediaInfo,
   MowerStatus,
@@ -123,16 +124,12 @@ export function useMenuBarModel() {
     }
   }, []);
 
-  const fetchMower = useCallback(async () => {
-    setMower(await invoke<MowerStatus | null>("get_mower_status"));
-  }, []);
-
-  const fetchVacuum = useCallback(async () => {
-    setVacuum(await invoke<VacuumStatus | null>("get_ha_vacuum_status"));
-  }, []);
-
-  const fetchPhone = useCallback(async () => {
-    setPhone(await invoke<PhoneStatus | null>("get_ha_phone_status"));
+  // Vacuum, mower, and phone come from the backend HA poller: one bulk
+  // /api/states fetch per cycle, pushed here as a single snapshot.
+  const applyHaSnapshot = useCallback((snapshot: HaSnapshot) => {
+    setVacuum(snapshot.vacuum);
+    setMower(snapshot.mower);
+    setPhone(snapshot.phone);
   }, []);
 
   const fetchCalendar = useCallback(async () => {
@@ -155,6 +152,11 @@ export function useMenuBarModel() {
       .then(setVolume)
       .catch((error) => report("load volume", error));
     fetchCoreStatuses().catch((error) => report("load statuses", error));
+    invoke<HaSnapshot>("get_ha_snapshot")
+      .then((snapshot) => {
+        if (!disposed) applyHaSnapshot(snapshot);
+      })
+      .catch((error) => report("load HA snapshot", error));
 
     const statusInterval = window.setInterval(
       () => fetchCoreStatuses().catch((error) => report("refresh statuses", error)),
@@ -164,6 +166,7 @@ export function useMenuBarModel() {
       listen<MediaInfo | null>("media-change", ({ payload }) => {
         if (mediaEnabledRef.current) setMediaInfo(payload);
       }),
+      listen<HaSnapshot>("ha-snapshot", ({ payload }) => applyHaSnapshot(payload)),
       listen<AppSettings>("settings-changed", ({ payload }) => {
         // Module polling reconfigures via the effect below.
         applySettings(payload);
@@ -177,7 +180,7 @@ export function useMenuBarModel() {
         callbacks.forEach((unlisten) => unlisten()),
       );
     };
-  }, [applySettings, fetchCoreStatuses]);
+  }, [applyHaSnapshot, applySettings, fetchCoreStatuses]);
 
   // Modules: fetch + poll only what is enabled and configured.
   // Re-runs whenever settings change, tearing down disabled modules.
@@ -227,22 +230,8 @@ export function useMenuBarModel() {
       setProjects(null);
     }
 
+    // Vacuum/mower/phone arrive via the backend poller's ha-snapshot events.
     const haReady = settings.homeassistant_url.trim() !== "";
-    if (haReady && m.mower.enabled && m.mower.entity_id !== "") {
-      poll(fetchMower, 60000, "mower");
-    } else {
-      setMower(null);
-    }
-    if (haReady && m.vacuum.enabled && m.vacuum.entity_id !== "") {
-      poll(fetchVacuum, 30000, "vacuum");
-    } else {
-      setVacuum(null);
-    }
-    if (haReady && m.phone.enabled && m.phone.device_slug !== "") {
-      poll(fetchPhone, 60000, "phone");
-    } else {
-      setPhone(null);
-    }
     if (haReady && m.calendar.enabled && m.calendar.entity_id !== "") {
       poll(fetchCalendar, 300000, "calendar");
     } else {
@@ -250,8 +239,8 @@ export function useMenuBarModel() {
     }
 
     return () => timers.forEach((timer) => window.clearInterval(timer));
-  }, [settings, fetchCalendar, fetchMedia, fetchMower, fetchObs, fetchPhone,
-      fetchProjects, fetchUsageLimits, fetchVacuum, fetchWeather]);
+  }, [settings, fetchCalendar, fetchMedia, fetchObs,
+      fetchProjects, fetchUsageLimits, fetchWeather]);
 
   useEffect(() => {
     setTime(formatTime(new Date(), use24h));

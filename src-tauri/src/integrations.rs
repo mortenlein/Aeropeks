@@ -1,10 +1,9 @@
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, Window};
 
+use crate::http::HttpClient;
 use crate::security;
 use crate::settings::SharedSettings;
-
-const USER_AGENT: &str = "Aeropeks/0.1.0 (https://github.com/mortenlein/Aeropeks)";
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
@@ -78,6 +77,7 @@ pub struct ObsStatus {
 pub async fn get_usage_limits(
     window: Window,
     settings: tauri::State<'_, SharedSettings>,
+    http: tauri::State<'_, HttpClient>,
 ) -> Result<LimitsSnapshot, String> {
     security::require_window(&window, &["main", "demo-usage", "settings"])?;
     let url = settings
@@ -89,12 +89,10 @@ pub async fn get_usage_limits(
     if url.is_empty() {
         return Err("usage limits URL is not configured".to_string());
     }
-    let response = reqwest::Client::builder()
-        .user_agent(USER_AGENT)
-        .timeout(std::time::Duration::from_secs(4))
-        .build()
-        .map_err(|e| e.to_string())?
+    let response = http
+        .0
         .get(&url)
+        .timeout(std::time::Duration::from_secs(4))
         .send()
         .await
         .map_err(|e| format!("usage limits service unavailable: {e}"))?;
@@ -113,6 +111,7 @@ pub async fn get_weather(
     lon: f64,
     place_name: String,
     window: Window,
+    http: tauri::State<'_, HttpClient>,
 ) -> Result<WeatherDetailed, String> {
     security::require_window(&window, &["main", "demo-weather"])?;
     if !lat.is_finite()
@@ -122,15 +121,16 @@ pub async fn get_weather(
     {
         return Err("invalid coordinates".to_string());
     }
-    let client = reqwest::Client::builder()
-        .user_agent(USER_AGENT)
-        .timeout(std::time::Duration::from_secs(8))
-        .build()
-        .map_err(|e| e.to_string())?;
     let url = format!(
         "https://api.met.no/weatherapi/locationforecast/2.0/compact?lat={lat:.4}&lon={lon:.4}"
     );
-    let response = client.get(url).send().await.map_err(|e| e.to_string())?;
+    let response = http
+        .0
+        .get(url)
+        .timeout(std::time::Duration::from_secs(8))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     if !response.status().is_success() {
         return Err(format!("weather service returned {}", response.status()));
     }
@@ -239,22 +239,24 @@ fn parse_weather(json: serde_json::Value, place_name: String) -> Result<WeatherD
 pub async fn search_locations(
     query: String,
     window: Window,
+    http: tauri::State<'_, HttpClient>,
 ) -> Result<Vec<LocationSearchResult>, String> {
     security::require_window(&window, &["settings"])?;
     let query = query.trim();
     if query.len() < 3 || query.len() > 100 {
         return Ok(Vec::new());
     }
-    let client = reqwest::Client::builder()
-        .user_agent(USER_AGENT)
-        .timeout(std::time::Duration::from_secs(8))
-        .build()
-        .map_err(|e| e.to_string())?;
     let url = format!(
         "https://www.yr.no/api/v0/locations/suggest?q={}",
         urlencoding::encode(query)
     );
-    let response = client.get(url).send().await.map_err(|e| e.to_string())?;
+    let response = http
+        .0
+        .get(url)
+        .timeout(std::time::Duration::from_secs(8))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     if !response.status().is_success() {
         return Err(format!("location service returned {}", response.status()));
     }

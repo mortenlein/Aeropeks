@@ -85,6 +85,7 @@ async fn github_get(client: &Client, token: &str, path: &str) -> Result<reqwest:
         .bearer_auth(token)
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
+        .timeout(Duration::from_secs(12))
         .send()
         .await
         .map_err(|e| format!("GitHub request failed: {e}"))
@@ -336,12 +337,7 @@ fn unix_now() -> i64 {
         .as_secs() as i64
 }
 
-async fn fetch_snapshot(token: String) -> Result<ProjectsSnapshot, String> {
-    let client = Client::builder()
-        .user_agent("Aeropeks/0.1.0")
-        .timeout(Duration::from_secs(12))
-        .build()
-        .map_err(|e| e.to_string())?;
+async fn fetch_snapshot(client: Client, token: String) -> Result<ProjectsSnapshot, String> {
     let response = github_get(
         &client,
         &token,
@@ -405,6 +401,7 @@ pub async fn get_projects(
     refresh: Option<bool>,
     window: Window,
     settings: State<'_, SharedSettings>,
+    http: State<'_, crate::http::HttpClient>,
 ) -> Result<Option<ProjectsSnapshot>, String> {
     security::require_window(&window, &["main", "demo-projects"])?;
     let token = settings
@@ -424,7 +421,7 @@ pub async fn get_projects(
             }
         }
     }
-    let snapshot = fetch_snapshot(token).await?;
+    let snapshot = fetch_snapshot(http.0.clone(), token).await?;
     *cache.lock().map_err(|e| e.to_string())? = Some(CachedSnapshot {
         created: Instant::now(),
         snapshot: snapshot.clone(),

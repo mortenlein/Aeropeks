@@ -238,8 +238,15 @@ pub struct AppSettings {
     pub homeassistant_url: String,
     #[serde(default)]
     pub homeassistant_token: String,
+    /// Seconds between bulk Home Assistant state fetches (clamped 5..=600).
+    #[serde(default = "default_ha_poll_seconds")]
+    pub homeassistant_poll_seconds: u32,
     #[serde(default)]
     pub modules: ModulesConfig,
+}
+
+fn default_ha_poll_seconds() -> u32 {
+    30
 }
 
 impl Default for AppSettings {
@@ -262,6 +269,7 @@ impl Default for AppSettings {
             hide_native_taskbar: false,
             homeassistant_url: String::new(),
             homeassistant_token: String::new(),
+            homeassistant_poll_seconds: default_ha_poll_seconds(),
             modules: ModulesConfig::default(),
         }
     }
@@ -612,6 +620,7 @@ mod tests {
             "hide_native_taskbar",
             "homeassistant_url",
             "homeassistant_token",
+            "homeassistant_poll_seconds",
             "modules",
         ] {
             assert!(contract.contains(&format!("{field}:")));
