@@ -124,20 +124,24 @@ export function ShortcutsPanel({ shortcuts }: { shortcuts: PinnedShortcut[] }) {
         {shortcuts.map((s, i) => (
           <div
             key={s.id}
+            onClick={() => openShortcut(s.id)}
             onMouseEnter={() => setHoveredRow(s.id)}
             onMouseLeave={() => setHoveredRow(null)}
-            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 2px', borderTop: i > 0 ? `1px solid ${T.divider}` : 'none' }}
+            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 6px', borderRadius: T.ctlR, cursor: 'pointer', background: hoveredRow === s.id ? T.ctlBg : 'transparent', borderTop: i > 0 ? `1px solid ${T.divider}` : 'none' }}
           >
             <Favicon url={s.url} size={16} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 12.5, fontWeight: 600, color: T.t1 }}>{shortcutHost(s.url)}</div>
               <Mono size={9.5} color={T.t3} style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.url}</Mono>
             </div>
-            <span onClick={() => openShortcut(s.id)} style={{ color: T.t3, display: 'flex', cursor: 'pointer', padding: 2 }}>
+            <span style={{ color: T.t3, display: 'flex', padding: 2 }}>
               <Icon name="extlink" size={11} />
             </span>
             <span
-              onClick={() => save(shortcuts.filter((x) => x.id !== s.id))}
+              onClick={(e) => {
+                e.stopPropagation();
+                save(shortcuts.filter((x) => x.id !== s.id));
+              }}
               style={{ color: T.t3, display: 'flex', cursor: 'pointer', padding: 2, visibility: hoveredRow === s.id ? 'visible' : 'hidden' }}
             >
               <Icon name="close" size={9} />
