@@ -95,15 +95,19 @@ settings test now guards the `without_secrets()` contract instead.*
       statuses, event listeners) and a module effect that fetches + schedules
       intervals only for enabled, configured modules and tears down on toggle.
 
-## Phase 3 — Frontend module registry
+## Phase 3 — Frontend module registry ✅ DONE 2026-06-11
 
-- [ ] Define a `BarModule` interface: `{ id, section, useData(), BarItem, Popover,
-      SettingsCard, pollMs }`.
-- [ ] Convert each feature to a module definition; `App.tsx` renders registry output
-      per section (DEV TOOLS / ENVIRONMENT / HOME / PERSONAL).
-- [ ] Replace the 12 popover `useState`/`ref` pairs with a single
-      `openPopoverId` state + one click-away handler + one window-height effect.
-- [ ] Optional: user-configurable module order within sections.
+- [x] `BarModuleDef` interface in `src/modules.tsx`:
+      `{ id, section, anchorStyle?, visible(model), item(model, ctx), popover(model, ctx) }`.
+      Data fetching stays in `useMenuBarModel` (already module-gated since Phase 2).
+- [x] All eight feature modules (usage limits, projects, weather, camera, mower,
+      vacuum, phone, calendar) converted to registry definitions; `App.tsx`
+      renders sections (DEV / ENVIRONMENT / HOME / PERSONAL) from the registry.
+- [x] Twelve popover `useState`/`ref` pairs replaced with one `openPopover` id,
+      one `data-popover-id` click-away handler, and one window-height effect.
+      System-tray popovers (bluetooth, volume, terminal, power) share the same
+      mechanism; screenshot mode forces its three popovers open via a flag.
+- [ ] Optional (deferred): user-configurable module order within sections.
 
 ## Phase 4 — Backend optimization
 

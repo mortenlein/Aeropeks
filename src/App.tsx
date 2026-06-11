@@ -1,36 +1,20 @@
-import { useEffect, useState, useRef } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { WeatherPopover } from "./WeatherPopover";
-import { UsageLimitsPopover } from "./UsageLimitsPopover";
 import { useMenuBarModel } from "./hooks/useMenuBarModel";
-import { ProjectsPopover } from "./ProjectsPopover";
-import { MowerPopover } from "./MowerPopover";
-import { CameraPopover } from "./CameraPopover";
-import { VacuumPopover } from "./VacuumPopover";
-import { PhonePopover } from "./PhonePopover";
-import { CalendarPopover } from "./CalendarPopover";
+import { BAR_MODULES, type BarModuleDef, type BarSection } from "./modules";
 import {
-  BarGroup, BarDivider, BarChip, BarItem, TrayIcon,
-  MowerGlyph, SourceTag, Panel, KV, Mono, PBar,
+  BarGroup, BarDivider, BarItem, TrayIcon,
+  SourceTag, Panel, KV, Mono, PBar,
 } from "./atoms";
 import { Icon } from "./icons";
 import { HUE, T } from "./tokens";
-import type { LimitProvider } from "./contracts";
 
-// The bar chip tracks the 5-hour window; the weekly window only shows in the popover.
-function providerPct(p: LimitProvider): number {
-  const v = p.shortWindow.remainingPercent ?? p.longWindow.remainingPercent;
-  return v == null ? 100 : Math.round(v);
-}
-
-function chipTag(key: string): string {
-  if (key.toLowerCase().includes("codex")) return "CDX";
-  if (key.toLowerCase().includes("claude")) return "CLD";
-  return key.slice(0, 3).toUpperCase();
-}
+// Popovers forced open while screenshot mode poses the bar.
+const DEMO_OPEN_POPOVERS = ["volume", "power", "bluetooth"];
 
 function App() {
+  const model = useMenuBarModel();
   const {
     battery,
     bluetooth,
@@ -40,48 +24,52 @@ function App() {
     micMuted,
     obsStatus,
     privacyMode,
-    projects,
-    projectsRefreshing,
-    refreshProjects,
     settings,
     time,
     toggleMic,
     togglePrivacy,
-    calendar,
-    mower,
-    phone,
-    vacuum,
-    usageLimits,
     volume,
-    weather,
-  } = useMenuBarModel();
+  } = model;
 
-  const [showVolume, setShowVolume] = useState(false);
-  const [showBluetoothMenu, setShowBluetoothMenu] = useState(false);
-  const bluetoothRef = useRef<HTMLDivElement>(null);
-  const [showWeather, setShowWeather] = useState(false);
-  const weatherRef = useRef<HTMLDivElement>(null);
-  const [showUsageLimits, setShowUsageLimits] = useState(false);
-  const usageLimitsRef = useRef<HTMLDivElement>(null);
-  const [showProjects, setShowProjects] = useState(false);
-  const projectsRef = useRef<HTMLDivElement>(null);
-  const [showMower, setShowMower] = useState(false);
-  const mowerRef = useRef<HTMLDivElement>(null);
-  const [showCamera, setShowCamera] = useState(false);
-  const cameraRef = useRef<HTMLDivElement>(null);
-  const [showVacuum, setShowVacuum] = useState(false);
-  const vacuumRef = useRef<HTMLDivElement>(null);
-  const [showPhone, setShowPhone] = useState(false);
-  const phoneRef = useRef<HTMLDivElement>(null);
-  const [showCalendar, setShowCalendar] = useState(false);
-  const calendarRef = useRef<HTMLDivElement>(null);
-  const [showPowerMenu, setShowPowerMenu] = useState(false);
-  const powerMenuRef = useRef<HTMLDivElement>(null);
-  const [showTerminalMenu, setShowTerminalMenu] = useState(false);
-  const [terminalMenuPos, setTerminalMenuPos] = useState({ x: 0, y: 0 });
-  const terminalMenuRef = useRef<HTMLDivElement>(null);
-  const volumeRef = useRef<HTMLDivElement>(null);
+  const [openPopover, setOpenPopover] = useState<string | null>(null);
   const [demoMode, setDemoMode] = useState(false);
+  const [terminalMenuPos, setTerminalMenuPos] = useState({ x: 0, y: 0 });
+
+  const togglePopover = (id: string) =>
+    setOpenPopover((current) => (current === id ? null : id));
+  const isOpen = (id: string) =>
+    openPopover === id || (demoMode && DEMO_OPEN_POPOVERS.includes(id));
+
+  // One click-away handler: anything outside the open anchor closes it.
+  useEffect(() => {
+    if (openPopover === null || demoMode) return;
+    const handleMouseDown = (event: MouseEvent) => {
+      const anchor = (event.target as HTMLElement).closest?.("[data-popover-id]");
+      if (!(anchor instanceof HTMLElement) || anchor.dataset.popoverId !== openPopover) {
+        setOpenPopover(null);
+      }
+    };
+    document.addEventListener("mousedown", handleMouseDown);
+    return () => document.removeEventListener("mousedown", handleMouseDown);
+  }, [openPopover, demoMode]);
+
+  // The bar window grows while any popover needs room below it.
+  const anyOpen = openPopover !== null || demoMode;
+  useEffect(() => {
+    invoke("set_window_height", { height: anyOpen ? 760 : 40 }).catch(console.error);
+  }, [anyOpen]);
+
+  useEffect(() => {
+    const unlistenEnter = listen("demo-mode", () => setDemoMode(true));
+    const unlistenExit = listen("demo-mode-exit", () => {
+      setDemoMode(false);
+      setOpenPopover(null);
+    });
+    return () => {
+      unlistenEnter.then((f) => f());
+      unlistenExit.then((f) => f());
+    };
+  }, []);
 
   const handleMediaControl = async (action: string) => {
     try {
@@ -90,68 +78,6 @@ function App() {
       console.error("Media control failed", e);
     }
   };
-
-  // Click-away listener
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (demoMode) return;
-      const checks: Array<[{ current: HTMLElement | null }, () => void]> = [
-        [volumeRef,       () => setShowVolume(false)],
-        [powerMenuRef,    () => setShowPowerMenu(false)],
-        [weatherRef,      () => setShowWeather(false)],
-        [usageLimitsRef,  () => setShowUsageLimits(false)],
-        [projectsRef,     () => setShowProjects(false)],
-        [terminalMenuRef, () => setShowTerminalMenu(false)],
-        [bluetoothRef,    () => setShowBluetoothMenu(false)],
-        [mowerRef,        () => setShowMower(false)],
-        [cameraRef,       () => setShowCamera(false)],
-        [vacuumRef,       () => setShowVacuum(false)],
-        [phoneRef,        () => setShowPhone(false)],
-        [calendarRef,     () => setShowCalendar(false)],
-      ];
-      for (const [ref, close] of checks) {
-        if (ref.current && !ref.current.contains(event.target as Node)) close();
-      }
-    };
-
-    const anyOpen = showVolume || showPowerMenu || showWeather || showUsageLimits ||
-      showProjects || showTerminalMenu || showBluetoothMenu || showMower ||
-      showCamera || showVacuum || showPhone || showCalendar;
-
-    if (anyOpen) document.addEventListener("mousedown", handleClickOutside);
-    else document.removeEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [demoMode, showBluetoothMenu, showCalendar, showCamera, showMower, showPhone,
-      showVacuum, showPowerMenu, showProjects, showTerminalMenu, showUsageLimits,
-      showVolume, showWeather]);
-
-  useEffect(() => {
-    const anyOpen = showVolume || showPowerMenu || showWeather || showUsageLimits ||
-      showProjects || showTerminalMenu || showBluetoothMenu || showMower ||
-      showCamera || showVacuum || showPhone || showCalendar;
-    invoke("set_window_height", { height: anyOpen ? 760 : 40 }).catch(console.error);
-  }, [showVolume, showPowerMenu, showWeather, showUsageLimits, showProjects,
-      showTerminalMenu, showBluetoothMenu, showMower, showCamera, showVacuum,
-      showPhone, showCalendar]);
-
-  useEffect(() => {
-    const unlistenEnter = listen("demo-mode", () => {
-      setDemoMode(true);
-      setShowPowerMenu(true);
-      setShowVolume(true);
-      setShowBluetoothMenu(true);
-    });
-    const unlistenExit = listen("demo-mode-exit", () => {
-      setDemoMode(false);
-      setShowPowerMenu(false);
-      setShowVolume(false);
-      setShowBluetoothMenu(false);
-    });
-    return () => {
-      unlistenEnter.then((f) => f());
-      unlistenExit.then((f) => f());
-    };
-  }, []);
 
   const handleVolumeChange = (newVol: number) => {
     changeVolume(newVol).catch((error) => console.error("Volume change failed", error));
@@ -165,17 +91,30 @@ function App() {
     try { await togglePrivacy(); } catch (e) { console.error("Privacy mode toggle failed", e); }
   };
 
-  const mediaEnabled = settings?.modules.media.enabled !== false;
-  const camera = settings?.modules.camera;
-  const cameraConfigured = !!(
-    settings?.homeassistant_url && camera?.enabled && camera.entity_id
-  );
-  const cameraLabel = camera?.entity_id
-    ? camera.entity_id.split(".")[1].replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase())
-    : "Camera";
-  const hasHome = !!(cameraConfigured || mower || vacuum);
-  const hasPersonal = !!(phone || calendar !== null);
+  const renderModule = (def: BarModuleDef) => {
+    const ctx = { open: isOpen(def.id), toggle: () => togglePopover(def.id) };
+    return (
+      <div
+        key={def.id}
+        className="bar-anchor"
+        data-popover-id={def.id}
+        style={def.anchorStyle}
+      >
+        {def.item(model, ctx)}
+        {ctx.open && def.popover(model, ctx)}
+      </div>
+    );
+  };
 
+  const sectionModules = (section: BarSection) =>
+    BAR_MODULES.filter((def) => def.section === section && def.visible(model));
+
+  const devModules = sectionModules("dev");
+  const environmentModules = sectionModules("environment");
+  const homeModules = sectionModules("home");
+  const personalModules = sectionModules("personal");
+
+  const mediaEnabled = settings?.modules.media.enabled !== false;
   const volPct = Math.round(volume * 100);
 
   return (
@@ -185,52 +124,12 @@ function App() {
         {/* ── DEV TOOLS ──────────────────────────────────────────────── */}
         <div className="left-section">
           <BarGroup gap={7}>
-
-            {usageLimits && (() => {
-              const hidden = settings?.usage_hidden_providers ?? [];
-              const entries = Object.entries(usageLimits.providers)
-                .filter(([key, p]) => p.enabled && !hidden.includes(key));
-              if (entries.length === 0) return null;
-              return (
-                <div ref={usageLimitsRef} className="bar-anchor" style={{ gap: 5 }}>
-                  {entries.map(([key, p]) => (
-                    <BarChip
-                      key={key}
-                      tag={chipTag(key)}
-                      pct={providerPct(p)}
-                      onClick={() => setShowUsageLimits(!showUsageLimits)}
-                    />
-                  ))}
-                  {showUsageLimits && <UsageLimitsPopover snapshot={usageLimits} />}
-                </div>
-              );
-            })()}
-
-            {usageLimits && projects && <BarDivider />}
-
-            {projects && (
-              <div ref={projectsRef} className="bar-anchor" style={{ gap: 5 }}>
-                <BarItem
-                  icon={<Icon name="branch" size={12} />}
-                  hue="var(--accent)"
-                  mono={String(projects.projects.length)}
-                  onClick={() => setShowProjects(!showProjects)}
-                />
-                {projects.attentionCount > 0 && (
-                  <span style={{ padding: '1.5px 6px', borderRadius: 4, background: `color-mix(in srgb, ${HUE.red} 18%, transparent)`, border: `1px solid color-mix(in srgb, ${HUE.red} 35%, transparent)` }}>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 600, color: HUE.red }}>{projects.attentionCount}</span>
-                  </span>
-                )}
-                {showProjects && (
-                  <ProjectsPopover
-                    snapshot={projects}
-                    refreshing={projectsRefreshing}
-                    onRefresh={() => refreshProjects().catch(console.error)}
-                  />
-                )}
-              </div>
-            )}
-
+            {devModules.map((def, index) => (
+              <Fragment key={def.id}>
+                {index > 0 && <BarDivider />}
+                {renderModule(def)}
+              </Fragment>
+            ))}
           </BarGroup>
         </div>
 
@@ -274,120 +173,24 @@ function App() {
         <div className="right-section">
 
           {/* ENVIRONMENT */}
-          {weather && (
-            <div ref={weatherRef} className="bar-anchor">
-              <BarGroup>
-                <BarItem
-                  icon={<Icon name="cloud" size={12} />}
-                  hue={HUE.weather}
-                  mono={`${Math.round(weather.temp)}°`}
-                  onClick={() => setShowWeather(!showWeather)}
-                />
-              </BarGroup>
-              {showWeather && <WeatherPopover data={weather} onClose={() => setShowWeather(false)} />}
-            </div>
+          {environmentModules.length > 0 && (
+            <BarGroup>{environmentModules.map(renderModule)}</BarGroup>
           )}
 
           {/* HOME */}
-          {hasHome && <BarDivider />}
-          {hasHome && (
-            <BarGroup gap={10}>
-
-              {cameraConfigured && (
-                <div ref={cameraRef} className="bar-anchor">
-                  <BarItem
-                    icon={<Icon name="cam" size={12} />}
-                    hue={T.t3}
-                    text={cameraLabel}
-                    onClick={() => setShowCamera(!showCamera)}
-                  />
-                  {showCamera && <CameraPopover label={cameraLabel} />}
-                </div>
-              )}
-
-              {mower && (() => {
-                const gc = mower.state === 'mowing' ? HUE.ok
-                  : mower.state === 'error' ? HUE.red
-                  : HUE.mower;
-                return (
-                  <div ref={mowerRef} className="bar-anchor">
-                    <BarItem
-                      icon={<MowerGlyph size={13} color={gc} />}
-                      text={mower.state_label}
-                      onClick={() => setShowMower(!showMower)}
-                    />
-                    {showMower && <MowerPopover mower={mower} />}
-                  </div>
-                );
-              })()}
-
-              {vacuum && (() => {
-                const vc = vacuum.cleaning ? HUE.ok
-                  : vacuum.status === 'charging' ? HUE.amber
-                  : HUE.vacuum;
-                const vt = vacuum.cleaning
-                  ? `${vacuum.cleaning_progress}%`
-                  : vacuum.status.charAt(0).toUpperCase() + vacuum.status.slice(1);
-                return (
-                  <div ref={vacuumRef} className="bar-anchor">
-                    <BarItem
-                      icon={<Icon name={vacuum.charging ? "bolt" : "battery"} size={12} />}
-                      hue={vc}
-                      text={vt}
-                      onClick={() => setShowVacuum(!showVacuum)}
-                    />
-                    {showVacuum && <VacuumPopover vacuum={vacuum} />}
-                  </div>
-                );
-              })()}
-
-            </BarGroup>
+          {homeModules.length > 0 && (
+            <>
+              <BarDivider />
+              <BarGroup gap={10}>{homeModules.map(renderModule)}</BarGroup>
+            </>
           )}
 
           {/* PERSONAL */}
-          {hasPersonal && <BarDivider />}
-          {hasPersonal && (
-            <BarGroup gap={10}>
-
-              {phone && (() => {
-                return (
-                  <div ref={phoneRef} className="bar-anchor">
-                    <BarItem
-                      icon={<Icon name={phone.charging ? "bolt" : "battery"} size={12} />}
-                      hue={HUE.phone}
-                      mono={`${phone.battery}%`}
-                      onClick={() => setShowPhone(!showPhone)}
-                    />
-                    {showPhone && <PhonePopover phone={phone} />}
-                  </div>
-                );
-              })()}
-
-              {calendar !== null && (() => {
-                const now = new Date();
-                const next = calendar.find(e => !e.all_day && new Date(e.end) > now);
-                const ongoing = next && new Date(next.start) <= now;
-                const calHue = ongoing ? 'var(--accent)' : next ? HUE.cal : undefined;
-                const calTime = next
-                  ? new Date(next.start).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
-                  : undefined;
-                const calText = next ? `${calTime} ${next.summary}` : undefined;
-                return (
-                  <div ref={calendarRef} className="bar-anchor">
-                    <BarItem
-                      icon={<Icon name="cal" size={11} />}
-                      hue={calHue}
-                      text={calText}
-                      dim={!next}
-                      style={{ maxWidth: 200 }}
-                      onClick={() => setShowCalendar(!showCalendar)}
-                    />
-                    {showCalendar && <CalendarPopover events={calendar} />}
-                  </div>
-                );
-              })()}
-
-            </BarGroup>
+          {personalModules.length > 0 && (
+            <>
+              <BarDivider />
+              <BarGroup gap={10}>{personalModules.map(renderModule)}</BarGroup>
+            </>
           )}
 
           {/* SYSTEM */}
@@ -404,18 +207,13 @@ function App() {
               onClick={handlePrivacyToggle}
             />
 
-            <div ref={bluetoothRef} className="bar-anchor">
+            <div className="bar-anchor" data-popover-id="bluetooth">
               <TrayIcon
                 icon={<Icon name="bt" size={11} />}
-                state={showBluetoothMenu ? 'open' : bluetooth.connected ? 'active' : 'idle'}
-                onClick={() => {
-                  setShowBluetoothMenu(!showBluetoothMenu);
-                  setShowVolume(false);
-                  setShowPowerMenu(false);
-                  setShowTerminalMenu(false);
-                }}
+                state={isOpen("bluetooth") ? 'open' : bluetooth.connected ? 'active' : 'idle'}
+                onClick={() => togglePopover("bluetooth")}
               />
-              {showBluetoothMenu && (
+              {isOpen("bluetooth") && (
                 <Panel w={200} title="Connected Devices" hue="var(--accent)" style={{ right: 0 }}>
                   {bluetooth.devices.length > 0
                     ? bluetooth.devices.map((device, idx) => (
@@ -434,20 +232,14 @@ function App() {
             />
 
             {/* Volume */}
-            <div ref={volumeRef} className="bar-anchor">
+            <div className="bar-anchor" data-popover-id="volume">
               <TrayIcon
                 icon={<Icon name="vol" size={11} />}
-                state={showVolume ? 'open' : 'idle'}
-                onClick={() => {
-                  setShowVolume(!showVolume);
-                  setShowPowerMenu(false);
-                  setShowTerminalMenu(false);
-                  setShowBluetoothMenu(false);
-                }}
+                state={isOpen("volume") ? 'open' : 'idle'}
+                onClick={() => togglePopover("volume")}
               />
-              {showVolume && (
+              {isOpen("volume") && (
                 <Panel w={300} title="Volume" style={{ right: 0 }}>
-                  {/* Slider row */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '4px 2px 2px' }}>
                     <span style={{ color: T.t2, display: 'flex', cursor: 'pointer' }}><Icon name="vol" size={14} /></span>
                     <div style={{ flex: 1, position: 'relative', height: 16, display: 'flex', alignItems: 'center' }}>
@@ -472,23 +264,23 @@ function App() {
 
             {/* Terminal SSH shortcuts */}
             <div
-              ref={terminalMenuRef}
               className="bar-anchor"
+              data-popover-id="terminal"
               onContextMenu={(e) => {
                 e.preventDefault();
                 setTerminalMenuPos({ x: e.clientX, y: e.clientY });
-                setShowTerminalMenu(true);
+                setOpenPopover("terminal");
               }}
             >
               <TrayIcon
                 icon={<Icon name="term" size={11} />}
-                state={showTerminalMenu ? 'open' : 'idle'}
+                state={isOpen("terminal") ? 'open' : 'idle'}
                 onClick={() => {
                   invoke("toggle_terminal_panel");
-                  setShowTerminalMenu(false);
+                  setOpenPopover(null);
                 }}
               />
-              {showTerminalMenu && (
+              {isOpen("terminal") && (
                 <Panel
                   w={220}
                   title="SSH Shortcuts"
@@ -500,7 +292,7 @@ function App() {
                       <div
                         key={idx}
                         onClick={async () => {
-                          setShowTerminalMenu(false);
+                          setOpenPopover(null);
                           await invoke("toggle_terminal_panel");
                           await invoke("start_pty", { rows: 24, cols: 80, command: s.cmd });
                         }}
@@ -518,19 +310,14 @@ function App() {
               )}
             </div>
 
-            {/* Power menu — Panel with SYSTEM header + icon rows */}
-            <div ref={powerMenuRef} className="bar-anchor">
+            {/* Power menu */}
+            <div className="bar-anchor" data-popover-id="power">
               <TrayIcon
                 icon={<Icon name="power" size={11} />}
-                state={showPowerMenu ? 'open' : 'idle'}
-                onClick={() => {
-                  setShowPowerMenu(!showPowerMenu);
-                  setShowVolume(false);
-                  setShowTerminalMenu(false);
-                  setShowBluetoothMenu(false);
-                }}
+                state={isOpen("power") ? 'open' : 'idle'}
+                onClick={() => togglePopover("power")}
               />
-              {showPowerMenu && (
+              {isOpen("power") && (
                 <Panel w={172} pad={8} title="System" style={{ right: 0 }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                     {([
