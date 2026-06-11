@@ -14,11 +14,13 @@ function DemoWrapper({ children }: { children: React.ReactNode }) {
   return (
     <div
       className="demo-popup-outer"
+      data-tauri-drag-region
       onContextMenu={(e) => e.preventDefault()}
     >
       <div className="demo-drag-handle" data-tauri-drag-region>
         <button
           className="demo-exit-btn"
+          onMouseDown={(e) => e.stopPropagation()}
           onClick={() => invoke("exit_demo_mode").catch(console.error)}
           title="Exit Screenshot Mode"
         >

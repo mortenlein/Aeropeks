@@ -1,9 +1,6 @@
-import { CalendarDays } from "lucide-react";
 import type { CalendarEvent } from "./contracts";
-
-interface Props {
-  events: CalendarEvent[];
-}
+import { Panel, Micro, Mono } from "./atoms";
+import { HUE, T } from "./tokens";
 
 function getLocalDate(isoStr: string, allDay: boolean): Date {
   if (allDay) {
@@ -40,13 +37,14 @@ function formatTimeRange(event: CalendarEvent): string {
   return `${formatTime(event.start)}–${formatTime(event.end)}`;
 }
 
-function isOngoing(event: CalendarEvent): boolean {
-  if (event.all_day) return false;
+export function CalendarPopover({ events }: { events: CalendarEvent[] }) {
   const now = Date.now();
-  return new Date(event.start).getTime() <= now && now < new Date(event.end).getTime();
-}
+  const liveEvent = events
+    .filter(e => !e.all_day)
+    .slice()
+    .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime())
+    .find(e => new Date(e.end).getTime() > now) ?? null;
 
-export function CalendarPopover({ events }: Props) {
   const groups = new Map<string, { date: Date; events: CalendarEvent[] }>();
   for (const event of events) {
     const date = getLocalDate(event.start, event.all_day);
@@ -59,35 +57,53 @@ export function CalendarPopover({ events }: Props) {
   );
 
   return (
-    <div className="calendar-popover">
-      <div className="calendar-popover-header">
-        <CalendarDays size={13} />
-        <span>Upcoming Events</span>
-      </div>
-
+    <Panel w={340} title="Upcoming Events" hue={HUE.cal} style={{ right: 0 }}>
       {sortedGroups.length === 0 ? (
-        <div className="calendar-empty">No upcoming events</div>
+        <div style={{ textAlign: "center", padding: "20px 0", fontSize: 12, color: T.t3 }}>
+          No upcoming events
+        </div>
       ) : (
-        sortedGroups.map((group) => (
-          <div key={dayKey(group.date)} className="calendar-day-group">
-            <div className="calendar-day-header">{formatDayHeader(group.date)}</div>
-            {group.events.map((event, i) => (
-              <div
-                key={i}
-                className={`calendar-event-row${isOngoing(event) ? " calendar-event-ongoing" : ""}`}
-              >
-                <span className="calendar-event-time">{formatTimeRange(event)}</span>
-                <div className="calendar-event-info">
-                  <span className="calendar-event-title">{event.summary}</span>
-                  {event.location && (
-                    <span className="calendar-event-location">{event.location}</span>
-                  )}
-                </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, maxHeight: 400, overflowY: "auto" }}>
+          {sortedGroups.map((group) => (
+            <div key={dayKey(group.date)}>
+              <Micro style={{ marginBottom: 6 }}>{formatDayHeader(group.date)}</Micro>
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                {group.events.map((event, i) => {
+                  const live = event === liveEvent;
+                  return (
+                    <div
+                      key={i}
+                      style={{
+                        display: "flex",
+                        gap: 10,
+                        padding: "7px 9px",
+                        background: live ? "color-mix(in srgb, var(--accent) 8%, transparent)" : "transparent",
+                        borderLeft: live ? "2px solid var(--accent)" : "2px solid transparent",
+                      }}
+                    >
+                      <Mono
+                        size={10.5}
+                        color={live ? "var(--accent)" : T.t3}
+                        style={{ width: 76, flexShrink: 0, paddingTop: 1 }}
+                      >
+                        {formatTimeRange(event)}
+                      </Mono>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                        <span style={{ fontSize: 12, fontWeight: 500, color: T.t1 }}>
+                          {event.summary}
+                        </span>
+                        {event.location && (
+                          <span style={{ fontSize: 10.5, color: T.t3 }}>{event.location}</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            ))}
-          </div>
-        ))
+            </div>
+          ))}
+        </div>
       )}
-    </div>
+    </Panel>
   );
 }

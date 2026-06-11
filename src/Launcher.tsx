@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Search, AppWindow, Globe, Settings, Command } from "lucide-react";
+import { Icon } from "./icons";
 
 interface SearchResult {
   id: string;
@@ -62,18 +62,18 @@ const Launcher = () => {
 
   const getIcon = (iconName: string) => {
     switch (iconName) {
-      case "Search": return <Search size={18} />;
-      case "AppWindow": return <AppWindow size={18} />;
-      case "Settings": return <Settings size={18} />;
-      case "Globe": return <Globe size={18} />;
-      default: return <Command size={18} />;
+      case "Search":    return <Icon name="search"  size={14} />;
+      case "AppWindow": return <Icon name="monitor" size={14} />;
+      case "Settings":  return <Icon name="gear"    size={14} />;
+      case "Globe":     return <Icon name="extlink" size={14} />;
+      default:          return <Icon name="term"    size={14} />;
     }
   };
 
   return (
     <div className="launcher-container" data-tauri-drag-region onKeyDown={handleKeyDown}>
       <div className="launcher-input-wrapper">
-        <Search className="search-icon" size={20} />
+        <span className="search-icon" style={{ display: 'flex' }}><Icon name="search" size={16} /></span>
         <input
           ref={inputRef}
           type="text"

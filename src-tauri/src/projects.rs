@@ -31,6 +31,8 @@ pub struct Project {
     is_archived: bool,
     pushed_at: Option<String>,
     open_issues_count: u64,
+    open_prs_count: usize,
+    releases_count: usize,
     health_score: u8,
     checks: HashMap<&'static str, ProjectCheck>,
 }
@@ -120,7 +122,7 @@ async fn inspect_repo(client: Client, token: String, repo: GithubRepo) -> Projec
         ]
         .into_iter()
         .collect();
-        return project_from(repo, checks, 100);
+        return project_from(repo, checks, 100, 0, 0);
     }
 
     let base = format!("/repos/{}", repo.full_name);
@@ -132,7 +134,8 @@ async fn inspect_repo(client: Client, token: String, repo: GithubRepo) -> Projec
     let docs_path = format!("{base}/contents/docs");
     let assets_path = format!("{base}/contents/assets");
     let milestones_path = format!("{base}/milestones?state=open&per_page=1");
-    let pulls_path = format!("{base}/pulls?state=open&per_page=1");
+    let pulls_path = format!("{base}/pulls?state=open&per_page=100");
+    let releases_path = format!("{base}/releases?per_page=100");
     let (
         has_readme,
         has_roadmap,
@@ -143,6 +146,7 @@ async fn inspect_repo(client: Client, token: String, repo: GithubRepo) -> Projec
         has_assets,
         milestones,
         open_prs,
+        releases_count,
         release,
     ) = tokio::join!(
         exists(&client, &token, &readme_path),
@@ -154,6 +158,7 @@ async fn inspect_repo(client: Client, token: String, repo: GithubRepo) -> Projec
         exists(&client, &token, &assets_path),
         count_items(&client, &token, &milestones_path),
         count_items(&client, &token, &pulls_path),
+        count_items(&client, &token, &releases_path),
         async {
             match github_get(&client, &token, &format!("{base}/releases/latest")).await {
                 Ok(response) if response.status().is_success() => {
@@ -246,13 +251,15 @@ async fn inspect_repo(client: Client, token: String, repo: GithubRepo) -> Projec
     );
 
     let score = health_score(&checks);
-    project_from(repo, checks, score)
+    project_from(repo, checks, score, open_prs, releases_count)
 }
 
 fn project_from(
     repo: GithubRepo,
     checks: HashMap<&'static str, ProjectCheck>,
     health_score: u8,
+    open_prs_count: usize,
+    releases_count: usize,
 ) -> Project {
     Project {
         name: repo.name,
@@ -263,6 +270,8 @@ fn project_from(
         is_archived: repo.archived,
         pushed_at: repo.pushed_at,
         open_issues_count: repo.open_issues_count,
+        open_prs_count,
+        releases_count,
         health_score,
         checks,
     }

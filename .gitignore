@@ -37,3 +37,7 @@ src-tauri/log.txt
 
 # Local settings
 settings.json
+
+# Claude design handoff downloads (redesign reference material)
+aeropeks-v*.zip
+aeropeks_v*_extracted/

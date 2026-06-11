@@ -168,6 +168,8 @@ export interface Project {
   isArchived: boolean;
   pushedAt: string | null;
   openIssuesCount: number;
+  openPrsCount: number;
+  releasesCount: number;
   healthScore: number;
   checks: Record<string, ProjectCheck>;
 }

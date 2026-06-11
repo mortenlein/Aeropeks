@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 /* Nerd Font for Terminal Glyphs */
 @font-face {
@@ -17,7 +17,8 @@
 }
 
 :root {
-  --font-main: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  /* Legacy aliases — keep for non-redesigned components */
+  --font-main: 'Space Grotesk', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --bg-primary: #08080c;
   --bg-elevated: rgba(255, 255, 255, 0.03);
   --bg-hover: rgba(255, 255, 255, 0.06);
@@ -28,10 +29,36 @@
   --border-subtle: rgba(255, 255, 255, 0.08);
   --border-active: rgba(34, 197, 94, 0.3);
   --blur-amount: 12px;
+
+  /* Terminal Precision design tokens */
+  --font-ui:   'Space Grotesk', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', 'MesloLGS NF', ui-monospace, monospace;
+  --bar-bg:    rgba(12,14,17,0.98);
+  --panel-bg:  #0e1013;
+  --panel-r:   8px;
+  --ctl-bg:    rgba(255,255,255,0.05);
+  --ctl-r:     4px;
+  --t1:        rgba(228,232,236,0.92);
+  --t2:        rgba(160,170,182,0.7);
+  --t3:        rgba(118,128,144,0.5);
+  --divider:   rgba(255,255,255,0.08);
+  /* Partly-cloudy icon cloud-fill — must match panel background */
+  --aero-panel-fill: #0e1013;
+
+  /* Domain hues — matches tokens.ts HUE constants */
+  --hue-mower:   oklch(0.71 0.13 302);
+  --hue-vacuum:  oklch(0.72 0.12 248);
+  --hue-phone:   oklch(0.72 0.11 220);
+  --hue-camera:  oklch(0.70 0.14 25);
+  --hue-weather: oklch(0.72 0.12 210);
+  --hue-cal:     oklch(0.72 0.12 275);
+  --hue-ok:      oklch(0.72 0.17 145);
+  --hue-amber:   oklch(0.78 0.14 70);
+  --hue-red:     oklch(0.66 0.19 25);
 }
 
 :root {
-  font-family: var(--font-main);
+  font-family: var(--font-ui);
   line-height: 1.5;
   font-weight: 400;
   color-scheme: dark;
@@ -60,7 +87,7 @@ body {
 .main-window .menu-bar {
   height: 32px;
   width: 100%;
-  background: var(--bg-primary);
+  background: var(--bar-bg);
   backdrop-filter: blur(var(--blur-amount));
   border-bottom: 1px solid var(--border-subtle);
   display: flex;
@@ -706,6 +733,28 @@ body {
   box-shadow: 0 0 10px rgba(34, 197, 94, 0.5);
 }
 
+/* ─── Aero animations ────────────────────────────────────────────── */
+@keyframes aeroPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+@keyframes aeroBlink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Popup anchor: position:relative wrapper inside bar items */
+.bar-anchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
 @keyframes bounce {
   0%, 100% { transform: scale(1); }
   50% { transform: scale(1.2); }
@@ -728,23 +777,6 @@ body {
   display: flex;
   flex-direction: column;
   gap: 14px;
-}
-
-.settings-container::-webkit-scrollbar {
-  width: 8px;
-}
-
-.settings-container::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.settings-container::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 10px;
-}
-
-.settings-container::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.1);
 }
 
 .settings-container h3 {
@@ -931,39 +963,9 @@ button.primary:hover {
   border-color: var(--text-dim);
 }
 
-/* Expanded Player Styles */
+/* Expanded Player — uses inline styles; only transparent root needed */
 #root {
   background: transparent !important;
-}
-
-.expanded-outer {
-  width: 100%;
-  height: 100%;
-  padding: 0;
-  box-sizing: border-box;
-  background: transparent !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  border: none !important;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.expanded-player {
-  width: 100%;
-  height: 100%;
-  background: #121218;
-  border-radius: 28px;
-  border: none !important;
-  box-shadow: none;
-  display: flex;
-  align-items: center;
-  padding: 24px 32px;
-  gap: 32px;
-  position: relative;
-  overflow: hidden;
-  box-sizing: border-box;
 }
 
 /* Demo popup standalone windows */
@@ -972,6 +974,7 @@ button.primary:hover {
   width: 100vw;
   height: 100vh;
   overflow: hidden;
+  background: #0e1013; /* opaque so transparent-window hit-testing works */
 }
 
 .demo-drag-handle {
@@ -979,13 +982,14 @@ button.primary:hover {
   top: 0;
   left: 0;
   right: 0;
-  height: 20px;
+  height: 36px; /* matches Panel top:36 — no transparent gap */
   z-index: 200;
   cursor: grab;
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  padding-right: 6px;
+  padding-right: 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
 }
 
 .demo-exit-btn {
@@ -1029,190 +1033,52 @@ button.primary:hover {
   font-size: 13px;
 }
 
-.player-drag-handle {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 28px;
-  cursor: grab;
-  z-index: 1;
-}
-
 .close-btn {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  background: var(--bg-elevated);
+  background: none;
   border: none;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-dim);
+  color: rgba(118,128,144,0.5);
   cursor: pointer;
   z-index: 10;
-  transition: all 0.2s;
+}
+
+/* ─── Minimal overlay scrollbars (4px, no track, no arrows) ──────── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.10) transparent;
+}
+*::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.10);
+  border-radius: 2px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.18);
+}
+*::-webkit-scrollbar-button {
+  display: none;
 }
 
 .close-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text-main);
-  transform: rotate(90deg);
-}
-
-.album-art-container {
-  width: 80px;
-  height: 80px;
-  flex-shrink: 0;
-}
-
-.album-art {
-  width: 100%;
-  height: 100%;
-  background: #1a1a24;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 
-    8px 8px 16px rgba(0, 0, 0, 0.5),
-    -4px -4px 10px rgba(255, 255, 255, 0.03);
-  overflow: hidden;
-  border: none;
-}
-
-.album-art-img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: 50%;
-  display: block;
-}
-
-.player-content {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 12px;
-}
-
-.track-info .title {
-  margin: 0;
-  font-size: 20px; /* Slightly larger title */
-  font-weight: 800;
-  color: var(--text-main);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  letter-spacing: -0.01em;
-}
-
-.track-info .artist {
-  margin: 4px 0 0;
-  font-size: 14px;
-  color: #94a3b8;
-  font-weight: 500;
-}
-
-.track-info .album {
-  margin: 2px 0 0;
-  font-size: 11px;
-  color: #5a6a7a;
-  font-weight: 400;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.progress-container {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.progress-bar {
-  height: 6px;
-  background: #0a0a0f;
-  border-radius: 10px;
-  width: 100%;
-  box-shadow: inset 2px 2px 4px rgba(0,0,0,0.5);
-  position: relative;
-}
-
-.progress-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #f97316, #fbbf24);
-  border-radius: 10px;
-  position: relative;
-  box-shadow: 0 0 10px rgba(249, 115, 22, 0.4);
-}
-
-.progress-knob {
-  position: absolute;
-  right: -6px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 14px;
-  height: 14px;
-  background: #fff;
-  border-radius: 50%;
-  box-shadow: 0 4px 8px rgba(0,0,0,0.5);
-}
-
-.time-info {
-  display: flex;
-  justify-content: space-between;
-  font-size: 10px;
-  color: var(--text-dim);
-  font-family: monospace;
-}
-
-.player-controls-expanded {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-}
-
-.ctrl-btn {
-  background: none;
-  border: none;
-  color: var(--text-dim);
-  cursor: pointer;
-  padding: 0;
-  transition: all 0.2s;
-}
-
-.ctrl-btn:hover {
-  color: #fff;
-  transform: scale(1.1);
-}
-
-.play-btn {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background: linear-gradient(145deg, #f97316, #ea580c);
-  border: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  box-shadow: 0 4px 15px rgba(234, 88, 12, 0.4);
-  transition: all 0.2s;
-}
-
-.play-btn:hover {
-  transform: scale(1.05);
-  box-shadow: 0 6px 20px rgba(234, 88, 12, 0.5);
+  background: rgba(255,255,255,0.05);
+  color: rgba(228,232,236,0.92);
 }
 
 /* Terminal Widget */
 .terminal-outer {
   width: 100%;
-  height: 100%;
+  height: 100vh;
   padding: 0;
   margin: 0;
   display: flex;
@@ -1221,30 +1087,23 @@ button.primary:hover {
 
 .terminal-panel {
   flex: 1;
-  background: #08080c;
-  border-radius: 0 0 16px 16px;
-  border: 1px solid var(--border-subtle);
-  border-top: none;
+  background: #0e1013;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.11);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-  animation: slideDown 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-@keyframes slideDown {
-  from { transform: translateY(-20px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+  box-shadow: 0 12px 32px rgba(0,0,0,0.45);
 }
 
 .terminal-header {
   height: 32px;
-  background: var(--bg-elevated);
+  background: rgba(255,255,255,0.025);
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 12px;
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid rgba(255,255,255,0.08);
   user-select: none;
 }
 
@@ -1252,11 +1111,12 @@ button.primary:hover {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-dim);
+  letter-spacing: 0.12em;
+  color: var(--accent);
 }
 
 .terminal-accent-dot {
@@ -1264,18 +1124,16 @@ button.primary:hover {
   height: 6px;
   background: var(--accent);
   border-radius: 50%;
-  box-shadow: 0 0 6px var(--accent);
 }
 
 .terminal-container {
   flex: 1;
-  padding: 8px;
-  background: #08080c;
+  padding: 12px;
+  background: rgba(0,0,0,0.35);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 5px;
   overflow: hidden;
-}
-
-.terminal-container .xterm {
-  padding: 4px;
+  margin: 0 8px 8px;
 }
 
 /* Redundant status-item rule removed to fix transparency (was at line 744) */
@@ -1366,15 +1224,6 @@ button.primary:hover {
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
   margin-bottom: 20px;
-}
-
-.weather-popover-container::-webkit-scrollbar {
-  width: 6px;
-}
-
-.weather-popover-container::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
 }
 
 @keyframes popIn {
@@ -1617,20 +1466,6 @@ button.primary:hover {
   to { transform: translateY(-50%) rotate(360deg); }
 }
 
-/* Custom Scrollbar for Search Dropdown */
-.search-results-dropdown::-webkit-scrollbar {
-  width: 6px;
-}
-.search-results-dropdown::-webkit-scrollbar-track {
-  background: transparent;
-}
-.search-results-dropdown::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
-}
-.search-results-dropdown::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
-}
 .section-header {
   display: flex;
   justify-content: space-between;
@@ -1709,14 +1544,12 @@ button.primary:hover {
 /* ── Launcher ──────────────────────────────────────────────────────── */
 
 .launcher-container {
-  background: rgba(18, 18, 18, 0.85);
-  backdrop-filter: blur(28px);
-  -webkit-backdrop-filter: blur(28px);
-  color: #fff;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #0e1013;
+  color: rgba(228,232,236,0.92);
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.11);
   overflow: hidden;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.45);
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -1728,11 +1561,11 @@ button.primary:hover {
 .launcher-input-wrapper {
   display: flex;
   align-items: center;
-  padding: 12px;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(0,0,0,0.32);
+  border-radius: 4px;
   margin-bottom: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255,255,255,0.1);
 }
 
 .launcher-input-wrapper:focus-within {
@@ -1765,9 +1598,8 @@ button.primary:hover {
   display: flex;
   align-items: center;
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: 4px;
   cursor: pointer;
-  transition: all 0.2s ease;
   margin-bottom: 2px;
 }
 
@@ -2032,32 +1864,31 @@ button.primary:hover {
 }
 
 .header-action-btn {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-dim);
-  font-size: 10px;
-  font-weight: 700;
+  background: none;
+  border: 1px solid rgba(255,255,255,0.08);
+  color: rgba(118,128,144,0.5);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
   text-transform: uppercase;
-  padding: 2px 8px;
+  letter-spacing: 0.1em;
+  padding: 2px 7px;
   border-radius: 4px;
   cursor: pointer;
-  transition: all 0.2s;
 }
 
 .header-action-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text-main);
-  border-color: var(--text-dim);
+  background: rgba(255,255,255,0.05);
+  color: rgba(160,170,182,0.7);
 }
 
 .header-action-btn.danger {
-  color: #f87171;
-  border-color: rgba(248, 113, 113, 0.2);
+  color: oklch(0.66 0.19 25);
+  border-color: rgba(255,255,255,0.08);
 }
 
 .header-action-btn.danger:hover {
-  background: rgba(248, 113, 113, 0.1);
-  border-color: #f87171;
+  background: rgba(255,255,255,0.05);
 }
 
 /* ── Taskbar Bottom ───────────────────────────────────────────────── */

@@ -1,4 +1,6 @@
 import type { LimitProvider, LimitsSnapshot, RateLimitWindow } from "./contracts";
+import { Panel, Card, PBar, Mono, Micro } from "./atoms";
+import { HUE, T, sevLeft } from "./tokens";
 
 const providerLabel = (id: string) =>
   id.charAt(0).toUpperCase() + id.slice(1);
@@ -21,125 +23,87 @@ export const usableProviders = (snapshot: LimitsSnapshot) =>
       provider.ok &&
       !provider.error &&
       windows.some(
-        (window) =>
-          window.remainingPercent !== null ||
-          window.usedPercent !== null ||
-          window.resetsAt !== null,
+        (w) =>
+          w.remainingPercent !== null ||
+          w.usedPercent !== null ||
+          w.resetsAt !== null,
       )
     );
   });
 
-export const lowestRemaining = (snapshot: LimitsSnapshot) => {
-  const values = usableProviders(snapshot).flatMap(([, provider]) =>
-    [provider.shortWindow, provider.longWindow]
-      .map((window) => window.remainingPercent)
-      .filter((value): value is number => value !== null),
-  );
-  return values.length > 0 ? Math.min(...values) : null;
-};
-
 export const usageLimitsSummary = (snapshot: LimitsSnapshot) => {
-  const labels: Record<string, string> = {
-    codex: "cdx",
-    claude: "cld",
-  };
-
+  const labels: Record<string, string> = { codex: "cdx", claude: "cld" };
   return usableProviders(snapshot)
     .filter(([id]) => id in labels)
     .map(([id, provider]) => {
-      const percentage = (window: RateLimitWindow) =>
-        window.remainingPercent === null
-          ? "-"
-          : `${Math.round(window.remainingPercent)}%`;
-      return `${labels[id]} ${percentage(provider.shortWindow)} ${percentage(provider.longWindow)}`;
+      const pct = (w: { remainingPercent: number | null }) =>
+        w.remainingPercent === null ? "-" : `${Math.round(w.remainingPercent)}%`;
+      return `${labels[id]} ${pct(provider.shortWindow)} ${pct(provider.longWindow)}`;
     })
     .join(" / ");
 };
 
-const compactProviderLabels: Record<string, string> = {
-  codex: "cdx",
-  claude: "cld",
+export const lowestRemaining = (snapshot: LimitsSnapshot) => {
+  const values = usableProviders(snapshot).flatMap(([, provider]) =>
+    [provider.shortWindow, provider.longWindow]
+      .map((w) => w.remainingPercent)
+      .filter((v): v is number => v !== null),
+  );
+  return values.length > 0 ? Math.min(...values) : null;
 };
 
-function CompactPercentage({ value }: { value: number | null }) {
+function WindowRow({ w }: { w: RateLimitWindow }) {
+  const pct = w.remainingPercent ?? 0;
+  const hue = sevLeft(pct);
   return (
-    <span
-      className={`usage-compact-value ${
-        value === null
-          ? "usage-value-missing"
-          : value <= 20
-            ? "usage-value-critical"
-            : "usage-value-ok"
-      }`}
-    >
-      {value === null ? "--" : Math.round(value)}
-    </span>
-  );
-}
-
-export function UsageLimitsSummary({ snapshot }: { snapshot: LimitsSnapshot }) {
-  const providers = usableProviders(snapshot).filter(
-    ([id]) => id in compactProviderLabels,
-  );
-
-  return (
-    <span className="usage-limits-summary">
-      {providers.map(([id, provider], index) => (
-        <span className="usage-limits-provider-summary" key={id}>
-          {index > 0 && <span className="usage-limits-separator"> / </span>}
-          <span className="usage-provider-code">{compactProviderLabels[id]}</span>
-          <span className="usage-window-compact">
-            <small>5h</small>
-            <CompactPercentage value={provider.shortWindow.remainingPercent} />
-          </span>
-          <span className="usage-window-compact">
-            <small>7d</small>
-            <CompactPercentage value={provider.longWindow.remainingPercent} />
-          </span>
-        </span>
-      ))}
-    </span>
-  );
-}
-
-function WindowRow({ window }: { window: RateLimitWindow }) {
-  const remaining = window.remainingPercent ?? 0;
-  return (
-    <div className="usage-window-row">
-      <span>{window.label}</span>
-      <div className="usage-track">
-        <div
-          className={`usage-fill ${remaining <= 20 ? "critical" : remaining <= 40 ? "warning" : ""}`}
-          style={{ width: `${Math.max(0, Math.min(remaining, 100))}%` }}
-        />
-      </div>
-      <strong>{Math.round(remaining)}%</strong>
-      <small>{resetIn(window.resetsAt)}</small>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 24 }}>
+      <Mono size={10} color={T.t3} style={{ width: 18 }}>{w.label}</Mono>
+      <PBar pct={pct} hue={hue} />
+      <Mono size={11.5} w={600} color={hue} style={{ width: 34, textAlign: "right" }}>
+        {Math.round(pct)}%
+      </Mono>
+      <Mono size={9.5} color={T.t3} style={{ width: 52, textAlign: "right" }}>
+        {resetIn(w.resetsAt)}
+      </Mono>
     </div>
   );
 }
 
 function ProviderCard({ id, provider }: { id: string; provider: LimitProvider }) {
   return (
-    <div className="usage-provider-card">
-      <div className="usage-provider-header">
-        <strong>{providerLabel(id)}</strong>
-        {provider.planType && <span>{provider.planType}</span>}
-        {provider.rateLimitReachedType && <em>limited</em>}
+    <Card style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+        <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--accent)" }}>{providerLabel(id)}</span>
+        {provider.planType && (
+          <Micro style={{ fontSize: 8, padding: "2px 6px", borderRadius: T.pillR, border: `1px solid ${T.divider}`, display: "inline-flex" }}>
+            {provider.planType}
+          </Micro>
+        )}
+        <span style={{ flex: 1 }} />
+        {provider.rateLimitReachedType && (
+          <Mono size={9} color={HUE.red} w={600}>LIMITED</Mono>
+        )}
       </div>
-      <WindowRow window={provider.shortWindow} />
-      <WindowRow window={provider.longWindow} />
-    </div>
+      <WindowRow w={provider.shortWindow} />
+      <WindowRow w={provider.longWindow} />
+    </Card>
   );
 }
 
 export function UsageLimitsPopover({ snapshot }: { snapshot: LimitsSnapshot }) {
+  const providers = usableProviders(snapshot);
   return (
-    <div className="usage-limits-popover dropdown">
-      <div className="ctx-header">AI Usage Limits</div>
-      {usableProviders(snapshot).map(([id, provider]) => (
-        <ProviderCard key={id} id={id} provider={provider} />
-      ))}
-    </div>
+    <Panel w={320} title="AI Usage Limits" style={{ left: 0 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {providers.map(([id, provider]) => (
+          <ProviderCard key={id} id={id} provider={provider} />
+        ))}
+        {providers.length === 0 && (
+          <div style={{ textAlign: "center", padding: "16px 0", fontSize: 12, color: T.t3 }}>
+            No active providers
+          </div>
+        )}
+      </div>
+    </Panel>
   );
 }

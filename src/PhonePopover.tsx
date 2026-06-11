@@ -1,17 +1,8 @@
-import { BatteryCharging, Battery, Wifi, MapPin, Activity, Clock } from "lucide-react";
 import type { PhoneStatus } from "./contracts";
+import { DeviceCard, KV, PBar, Mono } from "./atoms";
+import { Icon } from "./icons";
+import { HUE, T } from "./tokens";
 import pixel9Img from "./assets/pixel9.png";
-
-interface Props {
-  phone: PhoneStatus;
-}
-
-function battColor(level: number, charging: boolean): string {
-  if (charging) return "#4ade80";
-  if (level <= 20) return "#ef4444";
-  if (level <= 40) return "#fb923c";
-  return "#60a5fa";
-}
 
 function formatChargeTime(min: number): string {
   if (min < 0) return "";
@@ -22,65 +13,41 @@ function formatChargeTime(min: number): string {
 }
 
 function formatActivity(a: string): string {
-  return a.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+  return a.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-export function PhonePopover({ phone }: Props) {
-  const color = battColor(phone.battery, phone.charging);
-  const BatIcon = phone.charging ? BatteryCharging : Battery;
+export function PhonePopover({ phone }: { phone: PhoneStatus }) {
+  const battHue = phone.charging ? HUE.amber
+    : phone.battery <= 20 ? HUE.red
+    : HUE.phone;
   const chargeTime = formatChargeTime(phone.charge_time_min);
-  const presenceColor = phone.at_home ? "#4ade80" : "#fb923c";
   const hasWifi = phone.wifi_ssid && phone.wifi_ssid !== "unavailable" && phone.wifi_ssid !== "unknown";
   const hasActivity = phone.activity && phone.activity !== "unavailable" && phone.activity !== "unknown";
 
   return (
-    <div className="phone-popover">
-      <div className="phone-popover-hero">
-        <img src={pixel9Img} alt="Pixel 9 Pro XL" className="phone-popover-img" />
-        <div className="phone-popover-img-fade" />
-        <div
-          className="phone-popover-state-badge"
-          style={{ color: presenceColor, borderColor: presenceColor }}
-        >
-          <MapPin size={10} style={{ flexShrink: 0 }} />
-          {phone.at_home ? "Home" : "Away"}
-        </div>
-      </div>
-
-      <div className="phone-popover-body">
-        <div className="phone-stat-row">
-          <BatIcon size={13} style={{ color, flexShrink: 0 }} />
-          <span className="phone-stat-label">Battery</span>
-          <div className="phone-stat-bar-track">
-            <div className="phone-stat-bar-fill" style={{ width: `${phone.battery}%`, background: color }} />
-          </div>
-          <span className="phone-stat-val">{phone.battery}%</span>
-        </div>
-
-        {phone.charging && chargeTime && (
-          <div className="phone-stat-row">
-            <Clock size={13} style={{ color: "#a78bfa", flexShrink: 0 }} />
-            <span className="phone-stat-label">Full in</span>
-            <span className="phone-stat-val" style={{ color: "#a78bfa", marginLeft: "auto" }}>{chargeTime}</span>
-          </div>
-        )}
-
-        {hasWifi && (
-          <div className="phone-stat-row">
-            <Wifi size={13} style={{ color: "#60a5fa", flexShrink: 0 }} />
-            <span className="phone-stat-label" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {phone.wifi_ssid}
-            </span>
-          </div>
-        )}
-
-        {hasActivity && (
-          <div className="phone-stat-row">
-            <Activity size={13} style={{ color: "rgba(255,255,255,0.35)", flexShrink: 0 }} />
-            <span className="phone-stat-label">{formatActivity(phone.activity)}</span>
-          </div>
-        )}
-      </div>
-    </div>
+    <DeviceCard
+      w={248}
+      imgSrc={pixel9Img}
+      imgH={150}
+      title="Phone"
+      hue={HUE.phone}
+      pill={phone.at_home ? "Home" : "Away"}
+    >
+      <KV icon={<Icon name={phone.charging ? "bolt" : "battery"} size={12} />} label="Battery" hue={battHue}>
+        <PBar pct={phone.battery} hue={battHue} style={{ flex: "none", width: 64 }} />
+        <Mono size={11} w={600} style={{ marginLeft: 8, minWidth: 28, textAlign: "right" }}>{phone.battery}%</Mono>
+      </KV>
+      {phone.charging && chargeTime && (
+        <KV icon={<Icon name="clock" size={12} />} label="Full in" hue={HUE.amber}>
+          <Mono size={11} color={T.t2}>{chargeTime}</Mono>
+        </KV>
+      )}
+      {hasWifi && (
+        <KV icon={<Icon name="wifi" size={12} />} label={phone.wifi_ssid} hue={HUE.phone} />
+      )}
+      {hasActivity && (
+        <KV icon={<Icon name="pin" size={12} />} label={formatActivity(phone.activity)} hue={T.t3} />
+      )}
+    </DeviceCard>
   );
 }

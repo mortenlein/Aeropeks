@@ -4,7 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "@xterm/xterm/css/xterm.css";
-import { X } from "lucide-react";
+import { Icon } from "./icons";
 
 function Terminal() {
   const terminalRef = useRef<HTMLDivElement>(null);
@@ -60,21 +60,31 @@ function Terminal() {
     const term = new XTerm({
       cursorBlink: true,
       theme: {
-        background: "#08080c",
-        foreground: "#e2e8f0",
-        cursor: accentColor,
-        selectionBackground: "rgba(34, 197, 94, 0.3)",
-        black: "#000000",
-        red: "#ef4444",
-        green: "#22c55e",
-        yellow: "#f59e0b",
-        blue: "#3b82f6",
-        magenta: "#d946ef",
-        cyan: "#06b6d4",
-        white: "#ffffff",
+        background:   "transparent",
+        foreground:   "#E4E8EC",
+        cursor:       accentColor,
+        cursorAccent: "#0e1013",
+        selectionBackground: "rgba(34, 197, 94, 0.25)",
+        black:        "#0e1013",
+        red:          "#D96A5F",
+        green:        "#22C55E",
+        yellow:       "#D9A93F",
+        blue:         "#5E8FD8",
+        magenta:      "#A887E0",
+        cyan:         "#54AEC8",
+        white:        "#A0AAB6",
+        brightBlack:  "#767F90",
+        brightRed:    "#E07A70",
+        brightGreen:  "#3DD96E",
+        brightYellow: "#E6B84C",
+        brightBlue:   "#709EE5",
+        brightMagenta:"#B899E8",
+        brightCyan:   "#62BCCE",
+        brightWhite:  "#B4BEC8",
       },
-      fontFamily: '"MesloLGS NF", "JetBrainsMono NF", Consolas, "Courier New", monospace',
-      fontSize: 14,
+      fontFamily: '"JetBrains Mono", "MesloLGS NF", ui-monospace, monospace',
+      fontSize: 11.5,
+      lineHeight: 1.6,
       letterSpacing: 0,
       allowProposedApi: true,
       allowTransparency: true,
@@ -151,7 +161,7 @@ function Terminal() {
             <button className="header-action-btn" onClick={handleReset}>Reset</button>
             <button className="header-action-btn danger" onClick={() => invoke("kill_pty")}>Kill</button>
             <button className="close-btn" onClick={() => invoke("toggle_terminal_panel")}>
-              <X size={14} />
+              <Icon name="close" size={12} />
             </button>
           </div>
         </div>
