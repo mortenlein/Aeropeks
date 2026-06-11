@@ -398,7 +398,12 @@ fn main() {
         .setup(move |app| {
             let app_handle_media = app.handle().clone();
 
-            // Load real settings
+            // Load real settings. A missing settings file means a fresh
+            // install — open the Settings window so modules and credentials
+            // can be configured (load() writes the file, so check first).
+            let first_run = settings::settings_path(app.handle())
+                .map(|path| !path.exists())
+                .unwrap_or(false);
             let initial_settings = settings::load(app.handle());
             {
                 if let Ok(mut lock) = shared.lock() {
@@ -526,6 +531,10 @@ fn main() {
                     .build(),
             ).ok();
             app.global_shortcut().register(launcher_shortcut).ok();
+
+            if first_run {
+                open_settings_internal(app.handle());
+            }
 
             Ok(())
         })

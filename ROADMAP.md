@@ -128,12 +128,17 @@ settings test now guards the `without_secrets()` contract instead.*
       5–600) drives the poller; exposed in Settings. Per-module cadence was
       dropped — with one bulk fetch there is a single meaningful knob.
 
-## Phase 5 — Generalization & release
+## Phase 5 — Generalization & release ✅ DONE 2026-06-11
 
-- [ ] First-run onboarding: pick modules, enter credentials.
-- [ ] Strip remaining personal defaults (weather defaults to empty, not Oslo).
-- [ ] README: module list, setup per module, screenshots (demo mode).
-- [ ] Release pipeline: `tauri build` artifact in CI, versioned releases.
+- [x] First-run onboarding: a missing settings file opens the Settings window
+      automatically so modules and credentials can be configured. (A guided
+      wizard remains a possible future upgrade.)
+- [x] Personal defaults stripped: weather defaults to unset (was Oslo), the
+      "SSH: Home Lab" default terminal shortcut removed.
+- [x] README rewritten: module table with per-module configuration, HA entity
+      naming conventions, first-run behavior, security model, build + release.
+- [x] Release pipeline already existed (`release.yml`: tag `v*` → NSIS + MSI
+      via tauri-action) — verified, no changes needed.
 
 ---
 
