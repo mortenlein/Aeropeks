@@ -18,11 +18,10 @@ import { Icon } from "./icons";
 import { HUE, T } from "./tokens";
 import type { LimitProvider } from "./contracts";
 
+// The bar chip tracks the 5-hour window; the weekly window only shows in the popover.
 function providerPct(p: LimitProvider): number {
-  const vals = [p.shortWindow.remainingPercent, p.longWindow.remainingPercent]
-    .filter((v): v is number => v != null);
-  if (vals.length === 0) return 100;
-  return Math.round(Math.min(...vals));
+  const v = p.shortWindow.remainingPercent ?? p.longWindow.remainingPercent;
+  return v == null ? 100 : Math.round(v);
 }
 
 function chipTag(key: string): string {
@@ -130,7 +129,7 @@ function App() {
     const anyOpen = showVolume || showPowerMenu || showWeather || showUsageLimits ||
       showProjects || showTerminalMenu || showBluetoothMenu || showMower ||
       showCamera || showVacuum || showPhone || showCalendar;
-    invoke("set_window_height", { height: anyOpen ? 760 : 32 }).catch(console.error);
+    invoke("set_window_height", { height: anyOpen ? 760 : 40 }).catch(console.error);
   }, [showVolume, showPowerMenu, showWeather, showUsageLimits, showProjects,
       showTerminalMenu, showBluetoothMenu, showMower, showCamera, showVacuum,
       showPhone, showCalendar]);
@@ -180,7 +179,9 @@ function App() {
           <BarGroup gap={7}>
 
             {usageLimits && (() => {
-              const entries = Object.entries(usageLimits.providers).filter(([, p]) => p.enabled);
+              const hidden = settings?.usage_hidden_providers ?? [];
+              const entries = Object.entries(usageLimits.providers)
+                .filter(([key, p]) => p.enabled && !hidden.includes(key));
               if (entries.length === 0) return null;
               return (
                 <div ref={usageLimitsRef} className="bar-anchor" style={{ gap: 5 }}>
@@ -501,7 +502,7 @@ function App() {
                 <Panel
                   w={220}
                   title="SSH Shortcuts"
-                  style={{ position: 'fixed', top: 40, left: terminalMenuPos.x - 110 }}
+                  style={{ position: 'fixed', top: 48, left: terminalMenuPos.x - 110 }}
                   onClick={(e) => e.stopPropagation()}
                 >
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>

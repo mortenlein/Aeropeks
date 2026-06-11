@@ -293,10 +293,11 @@ fn open_demo_mode(app: AppHandle, window: Window) -> Result<(), String> {
 
     // Standalone demo popup windows for draggable popover screenshots.
     // Positioned near the matching bar items along the right side.
+    let popover_y = shell::BAR_HEIGHT + 4;
     let demo_layout: &[(&str, i32, i32)] = &[
-        ("demo-weather",  w - 480, 36),
-        ("demo-usage",    w - 880, 36),
-        ("demo-projects", w - 1330, 36),
+        ("demo-weather",  w - 480, popover_y),
+        ("demo-usage",    w - 880, popover_y),
+        ("demo-projects", w - 1330, popover_y),
     ];
     for (label, x, y) in demo_layout {
         if let Some(panel) = app.get_webview_window(label) {
@@ -355,7 +356,7 @@ fn toggle_expanded_player(handle: tauri::AppHandle, window: Window) -> Result<()
                 let width = 640;
                 let height = 280; // Increased to 280 to be safe
                 let x = (m_size.width as i32 - width) / 2;
-                let y = 36;
+                let y = shell::BAR_HEIGHT + 4;
                 let _ = window
                     .set_size(tauri::Size::Physical(tauri::PhysicalSize {
                         width: width as u32,
@@ -392,7 +393,7 @@ fn toggle_terminal_panel_internal(handle: &tauri::AppHandle) {
                 let width = 860;
                 let height = 460;
                 let x = m_size.width as i32 - width - 12;
-                let y = 36;
+                let y = shell::BAR_HEIGHT + 4;
                 let _ = window
                     .set_size(tauri::Size::Physical(tauri::PhysicalSize {
                         width: width as u32,

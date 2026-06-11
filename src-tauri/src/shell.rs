@@ -20,6 +20,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use crate::security;
 
+/// Height of the top bar in physical pixels. Keep in sync with the
+/// `--bar-height` / menu-bar height in src/index.css and tauri.conf.json.
+pub const BAR_HEIGHT: i32 = 40;
+
 pub fn configure_main_window(
     window: tauri::WebviewWindow,
     reserve_screen_space: bool,
@@ -33,7 +37,7 @@ pub fn configure_main_window(
     window
         .set_size(tauri::Size::Physical(tauri::PhysicalSize {
             width,
-            height: 32,
+            height: BAR_HEIGHT as u32,
         }))
         .map_err(|e| e.to_string())?;
     let _ = window.set_shadow(false);
@@ -48,7 +52,7 @@ pub fn configure_main_window(
                 0,
                 0,
                 width as i32,
-                32,
+                BAR_HEIGHT,
                 SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED,
             )
             .map_err(|e| e.to_string())?;
@@ -134,7 +138,7 @@ fn maintain_app_bar(window: &tauri::WebviewWindow) -> Result<(), String> {
         let mut app_bar = app_bar_data(hwnd, ABE_TOP, width);
         SHAppBarMessage(ABM_QUERYPOS, &mut app_bar);
         app_bar.rc.top = 0;
-        app_bar.rc.bottom = 32;
+        app_bar.rc.bottom = BAR_HEIGHT;
         SHAppBarMessage(ABM_SETPOS, &mut app_bar);
         let height = window.inner_size().map_err(|e| e.to_string())?.height;
         SetWindowPos(
@@ -161,7 +165,7 @@ fn app_bar_data(hwnd: HWND, edge: u32, width: u32) -> APPBARDATA {
             left: 0,
             top: 0,
             right: width as i32,
-            bottom: 32,
+            bottom: BAR_HEIGHT,
         },
         lParam: LPARAM(0),
     }
@@ -182,7 +186,7 @@ fn register_app_bar(hwnd: HWND, width: u32) {
         SHAppBarMessage(ABM_NEW, &mut app_bar);
         SHAppBarMessage(ABM_QUERYPOS, &mut app_bar);
         app_bar.rc.top = 0;
-        app_bar.rc.bottom = 32;
+        app_bar.rc.bottom = BAR_HEIGHT;
         SHAppBarMessage(ABM_SETPOS, &mut app_bar);
     }
 }
@@ -282,7 +286,7 @@ unsafe extern "system" fn nudge_window_if_stuck(
     }
     let mut rect = RECT::default();
     // Quick check: skip any window whose raw top is already well below the bar.
-    if GetWindowRect(hwnd, &mut rect).is_err() || rect.top >= 32 {
+    if GetWindowRect(hwnd, &mut rect).is_err() || rect.top >= BAR_HEIGHT {
         return true.into();
     }
     // Use DWM visible frame bounds to distinguish "correctly at work-area boundary"
@@ -297,7 +301,7 @@ unsafe extern "system" fn nudge_window_if_stuck(
         Ok(_) => (frame.top, frame.left, frame.right),
         Err(_) => (rect.top + 8, rect.left, rect.right),
     };
-    if visible_top >= 32 {
+    if visible_top >= BAR_HEIGHT {
         return true.into();
     }
     let screen_w = GetSystemMetrics(SM_CXSCREEN);
@@ -309,7 +313,7 @@ unsafe extern "system" fn nudge_window_if_stuck(
         hwnd,
         HWND(std::ptr::null_mut()),
         rect.left,
-        32 - dwm_offset,
+        BAR_HEIGHT - dwm_offset,
         rect.right - rect.left,
         rect.bottom - rect.top,
         SWP_NOACTIVATE | SWP_NOZORDER,

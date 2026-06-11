@@ -85,7 +85,7 @@ body {
 }
 
 .main-window .menu-bar {
-  height: 32px;
+  height: 40px;
   width: 100%;
   background: var(--bar-bg);
   backdrop-filter: blur(var(--blur-amount));

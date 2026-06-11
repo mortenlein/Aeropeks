@@ -24,6 +24,7 @@ export function useSettingsModel() {
   const [obsPassword, setObsPassword] = useState("");
   const [githubToken, setGithubToken] = useState("");
   const [usageLimitsUrl, setUsageLimitsUrl] = useState("");
+  const [usageHiddenProviders, setUsageHiddenProviders] = useState<string[]>([]);
   const [reserveScreenSpace, setReserveScreenSpace] = useState(true);
   const [hideNativeTaskbar, setHideNativeTaskbar] = useState(false);
   const [debugInspector, setDebugInspector] = useState(false);
@@ -51,6 +52,7 @@ export function useSettingsModel() {
         setObsPassword(settings.obs_websocket_password);
         setGithubToken(settings.github_token);
         setUsageLimitsUrl(settings.usage_limits_url);
+        setUsageHiddenProviders(settings.usage_hidden_providers ?? []);
         setUse24h(settings.use_24h);
         setReserveScreenSpace(settings.reserve_screen_space);
         setHideNativeTaskbar(settings.hide_native_taskbar);
@@ -107,6 +109,7 @@ export function useSettingsModel() {
           obs_websocket_password: obsPassword,
           github_token: githubToken,
           usage_limits_url: usageLimitsUrl,
+          usage_hidden_providers: usageHiddenProviders,
           use_24h: use24h,
           reserve_screen_space: reserveScreenSpace,
           hide_native_taskbar: hideNativeTaskbar,
@@ -204,6 +207,8 @@ export function useSettingsModel() {
     plexUrl,
     usageLimitsUrl,
     setUsageLimitsUrl,
+    usageHiddenProviders,
+    setUsageHiddenProviders,
     refreshDebugWindows,
     removeShortcut,
     reserveScreenSpace,

@@ -1,6 +1,7 @@
-import { type CSSProperties, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import type { LimitsSnapshot } from "./contracts";
 import { useSettingsModel } from "./hooks/useSettingsModel";
 import { T } from "./tokens";
 import { Card, Micro } from "./atoms";
@@ -140,6 +141,8 @@ function Settings() {
     setGithubToken,
     usageLimitsUrl,
     setUsageLimitsUrl,
+    usageHiddenProviders,
+    setUsageHiddenProviders,
     obsUrl,
     setObsUrl,
     obsPassword,
@@ -174,6 +177,22 @@ function Settings() {
     saved,
     handleSave,
   } = useSettingsModel();
+
+  // Provider keys for the bar-visibility toggles. Discovered from the live
+  // snapshot; hidden keys are kept so they can be re-enabled if the service is down.
+  const [providerKeys, setProviderKeys] = useState<string[]>([]);
+  useEffect(() => {
+    invoke<LimitsSnapshot>("get_usage_limits")
+      .then((snapshot) => setProviderKeys(Object.keys(snapshot.providers)))
+      .catch(() => setProviderKeys([]));
+  }, []);
+  const toggleProviders = [...new Set([...providerKeys, ...usageHiddenProviders])];
+  const setProviderVisible = (key: string, visible: boolean) =>
+    setUsageHiddenProviders(
+      visible
+        ? usageHiddenProviders.filter((k) => k !== key)
+        : [...usageHiddenProviders, key],
+    );
 
   return (
     <div style={{ fontFamily: "var(--font-ui)", background: T.panelBg, color: T.t1, height: "100vh", display: "flex", flexDirection: "column" }}>
@@ -291,12 +310,26 @@ function Settings() {
             </SetField>
 
             <SetField label="Usage Limits Service URL" help="Local AI usage tracking endpoint. Leave blank to disable.">
-              <Inp
-                value={usageLimitsUrl}
-                onChange={(e) => setUsageLimitsUrl(e.target.value)}
-                placeholder="http://localhost:8765/api/v1/snapshot"
-                style={{ fontFamily: "var(--font-mono)" }}
-              />
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, flex: 1 }}>
+                <Inp
+                  value={usageLimitsUrl}
+                  onChange={(e) => setUsageLimitsUrl(e.target.value)}
+                  placeholder="http://localhost:8765/api/v1/snapshot"
+                  style={{ flex: "none", width: "100%", fontFamily: "var(--font-mono)" }}
+                />
+                {toggleProviders.length > 0 && (
+                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                    {toggleProviders.map((key) => (
+                      <SetCheck
+                        key={key}
+                        on={!usageHiddenProviders.includes(key)}
+                        onChange={(v) => setProviderVisible(key, v)}
+                        label={`Show ${key.charAt(0).toUpperCase()}${key.slice(1)} in bar`}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
             </SetField>
 
             <SetField label="OBS Studio WebSocket" help="Enable 'WebSocket Server' in OBS Studio for live status tracking.">

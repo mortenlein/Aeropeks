@@ -79,7 +79,7 @@ pub async fn get_usage_limits(
     window: Window,
     settings: tauri::State<'_, SharedSettings>,
 ) -> Result<LimitsSnapshot, String> {
-    security::require_window(&window, &["main", "demo-usage"])?;
+    security::require_window(&window, &["main", "demo-usage", "settings"])?;
     let url = settings
         .lock()
         .map_err(|e| e.to_string())?

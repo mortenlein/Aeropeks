@@ -97,6 +97,9 @@ pub struct AppSettings {
     pub github_token: String,
     #[serde(default)]
     pub usage_limits_url: String,
+    /// Provider keys (e.g. "claude", "codex") hidden from the bar. Empty = show all.
+    #[serde(default)]
+    pub usage_hidden_providers: Vec<String>,
     #[serde(default = "default_true")]
     pub use_24h: bool,
     #[serde(default = "default_reserve_screen_space")]
@@ -133,6 +136,7 @@ impl Default for AppSettings {
             obs_websocket_password: String::new(),
             github_token: String::new(),
             usage_limits_url: String::new(),
+            usage_hidden_providers: Vec::new(),
             use_24h: true,
             reserve_screen_space: true,
             hide_native_taskbar: false,

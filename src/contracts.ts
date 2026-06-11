@@ -17,6 +17,7 @@ export interface AppSettings {
   obs_websocket_password: string;
   github_token: string;
   usage_limits_url: string;
+  usage_hidden_providers: string[];
   use_24h: boolean;
   reserve_screen_space: boolean;
   hide_native_taskbar: boolean;

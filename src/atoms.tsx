@@ -36,7 +36,7 @@ export function Panel({ w, title, icon, hue = 'var(--accent)', actions, children
 }) {
   const p = pad ?? T.pad;
   return (
-    <div onClick={onClick} style={{ width: w, background: T.panelBg, border: T.panelBorder, borderRadius: T.panelR, boxShadow: T.shadow, padding: p, fontFamily: 'var(--font-ui)', color: T.t1, position: 'absolute', top: 36, zIndex: 100, ...style }}>
+    <div onClick={onClick} style={{ width: w, background: T.panelBg, border: T.panelBorder, borderRadius: T.panelR, boxShadow: T.shadow, padding: p, fontFamily: 'var(--font-ui)', color: T.t1, position: 'absolute', top: 44, zIndex: 100, ...style }}>
       {title && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, paddingBottom: 9, borderBottom: `1px solid ${T.divider}` }}>
           {icon && <span style={{ color: hue, display: 'flex', flexShrink: 0 }}>{icon}</span>}

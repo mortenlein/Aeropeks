@@ -14,7 +14,7 @@
         "label": "main",
         "title": "Aeropeks",
         "width": 1920,
-        "height": 32,
+        "height": 40,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,
