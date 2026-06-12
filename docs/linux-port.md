@@ -4,6 +4,15 @@ Goal: make Aeropeks build and run on Linux behind `cfg` gates, with Windows
 behavior unchanged. Target environment is CachyOS with KDE Plasma on Wayland
 (the default session); X11 is treated as a degraded fallback.
 
+> **Reality check (2026-06-12):** the test laptop actually runs **COSMIC**
+> (cosmic-comp via cosmic-greeter), not KDE. cosmic-comp implements
+> wlr-layer-shell, so the bar plan is unchanged, but two findings differ from
+> the KDE assumptions: (1) the GNOME keyring default collection stays locked
+> after login, so Secret Service calls block on an unlock prompt — secrets
+> must never load on the UI path (see §4); (2) KWallet-specific notes don't
+> apply. Phases 0 and 1 are implemented; the layer-shell bar renders with an
+> exclusive zone under cosmic-comp.
+
 ## Current state
 
 The `windows` crate is an unconditional dependency, so the project does not
@@ -58,7 +67,7 @@ windows = { version = "0.58.0", features = [ ...current list... ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"                          # matches tauri v2's gtk3 stack
-gtk-layer-shell = "0.8"               # wlr-layer-shell bindings (KWin supports it)
+gtk-layer-shell = { version = "0.8", features = ["v0_6"] }  # wlr-layer-shell bindings; v0_6 unlocks set_keyboard_mode/is_supported
 zbus = "4"                            # UPower, BlueZ, logind, MPRIS
 mpris = "2"                           # local media sessions (replaces GSMTC)
 freedesktop-desktop-entry = "0.5"     # .desktop parsing for the launcher
@@ -104,9 +113,15 @@ so apply layer-shell in `setup()` before the `window.show()` call.
 `_NET_WM_WINDOW_TYPE_DOCK` on the GTK window. Ship Wayland-only first;
 detect via `WAYLAND_DISPLAY` and fall back to plain always-on-top on X11.
 
-**`hide_native_taskbar`:** no Linux equivalent (panels belong to the DE).
-No-op in the backend; hide the toggle in Settings when
-`navigator.userAgent`/a new `get_platform` command reports Linux.
+**`hide_native_taskbar`:** implemented on COSMIC (no-op elsewhere). The
+panel settings are plain RON files that cosmic-panel hot-reloads, so
+`set_native_taskbar_visible(false)` flips `autohide` +
+`exclusive_zone: false` on every Top-anchored panel entry in
+`~/.config/cosmic/com.system76.CosmicPanel.{Entry}/v1/`. Originals are
+backed up under `~/.aeropeks/cosmic-panel-backup/` before the first write
+and replayed by `set_native_taskbar_visible(true)` — which `restore_bar`
+calls on quit and `setup()` calls at startup when the setting is off, so a
+crash while hidden heals on the next launch.
 
 ### 2. System status — `system_status.rs`
 
@@ -155,6 +170,14 @@ for the `keyring` crate, service `"Aeropeks"`, account = existing target
 strings (`Aeropeks/PlexToken`, …). On KDE this lands in KWallet via Secret
 Service. The save/rollback orchestration in `save()` is portable and stays.
 The retired-Dreame purge is Windows-only history — gate it `cfg(windows)`.
+
+**Secrets must never load on the UI path.** If the Secret Service collection
+is locked (normal on a session where PAM didn't unlock the keyring, e.g.
+COSMIC via greetd), every read triggers an unlock prompt and the D-Bus call
+blocks until the prompt is answered — possibly forever. `settings::load_file`
+reads the JSON only and feeds window setup; the full `settings::load` (which
+attaches secrets) runs on a background thread in `setup()` that updates
+`SharedSettings`, wakes the HA poller, and emits `settings-changed`.
 
 ### 5. Launcher — `launcher.rs`
 
@@ -215,8 +238,8 @@ rustup target list  # plain x86_64-unknown-linux-gnu, no cross target needed
 
 | Phase | Scope | Outcome | Est. effort |
 |---|---|---|---|
-| 0 | Cargo target-gating, `platform/` split, Linux stubs (volume=0, battery=none, plain always-on-top bar) | `cargo build` + bar renders on CachyOS; HA/Plex/weather/OBS/projects/shortcuts/terminal all functional | ~1 day |
-| 1 | Layer-shell bar (exclusive zone, restore, settings toggle) | Real appbar behavior | ~0.5–1 day |
+| 0 ✅ | Cargo target-gating, `platform/` split, Linux stubs (volume=0, battery=none, plain always-on-top bar) | `cargo build` + bar renders on CachyOS; HA/Plex/weather/OBS/projects/shortcuts/terminal all functional | ~1 day |
+| 1 ✅ | Layer-shell bar (exclusive zone, restore, settings toggle) | Real appbar behavior | ~0.5–1 day |
 | 2 | wpctl volume/mic, sysfs battery, BlueZ bluetooth, MPRIS media + listener | Bar fully live | ~1–2 days |
 | 3 | keyring secrets, .desktop launcher, logind power actions, shell pick | Feature parity minus Windows-only items | ~1 day |
 | 4 | GlobalShortcuts portal, X11 strut fallback, autostart, packaging (AppImage/AUR) | Polish | as desired |
@@ -226,7 +249,10 @@ main reason to run it there — are pure HTTP and already portable.
 
 ## Known gaps on Linux (accepted)
 
-- `hide_native_taskbar`: meaningless; setting hidden.
+- `hide_native_taskbar`: works on COSMIC (panel autohide); no-op on other DEs.
+- The bar's layer surface maps to the focused output at launch, so on
+  multi-monitor it can land on either screen. Pin with
+  `LayerShell::set_monitor` if this gets annoying.
 - Privacy mode disables the mic only (no unprivileged camera kill switch).
 - Global hotkeys absent on Wayland until the portal implementation lands.
 - Multi-monitor: layer-shell anchors to one output; current code is
