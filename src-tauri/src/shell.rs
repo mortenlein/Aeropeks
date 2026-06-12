@@ -14,11 +14,20 @@ pub fn configure_main_window(
     reserve_screen_space: bool,
     shutdown: Arc<AtomicBool>,
 ) -> Result<(), String> {
+    // Wayland has no primary-monitor concept, so fall back to the monitor the
+    // window landed on, then to the first known one, before giving up.
     let monitor = window
         .primary_monitor()
-        .map_err(|e| e.to_string())?
-        .ok_or("no primary monitor available")?;
-    let width = monitor.size().width;
+        .ok()
+        .flatten()
+        .or_else(|| window.current_monitor().ok().flatten())
+        .or_else(|| {
+            window
+                .available_monitors()
+                .ok()
+                .and_then(|monitors| monitors.into_iter().next())
+        });
+    let width = monitor.map(|m| m.size().width).unwrap_or(1280);
     window
         .set_size(tauri::Size::Physical(tauri::PhysicalSize {
             width,
