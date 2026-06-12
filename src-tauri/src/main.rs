@@ -524,14 +524,12 @@ fn main() {
                         let _ = shell::restore(window.app_handle());
                     }
                 }
-                tauri::WindowEvent::Destroyed => {
-                    if window.label() == "main" {
-                        window
-                            .state::<ShutdownState>()
-                            .0
-                            .store(true, Ordering::Relaxed);
-                        let _ = shell::restore(window.app_handle());
-                    }
+                tauri::WindowEvent::Destroyed if window.label() == "main" => {
+                    window
+                        .state::<ShutdownState>()
+                        .0
+                        .store(true, Ordering::Relaxed);
+                    let _ = shell::restore(window.app_handle());
                 }
                 _ => {}
             }
