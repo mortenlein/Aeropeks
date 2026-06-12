@@ -1,16 +1,11 @@
-use std::ffi::c_void;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::ptr;
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
-use windows::core::{PCWSTR, PWSTR};
-use windows::Win32::Security::Credentials::{
-    CredDeleteW, CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE,
-    CRED_TYPE_GENERIC,
-};
+
+use crate::platform::{read_secret, restore_secret, write_secret};
 
 const PLEX_TOKEN_TARGET: &str = "Aeropeks/PlexToken";
 const OBS_PASSWORD_TARGET: &str = "Aeropeks/ObsWebSocketPassword";
@@ -439,83 +434,6 @@ fn write_file(path: &Path, settings: &AppSettings) -> Result<(), String> {
         fs::remove_file(backup).map_err(|e| e.to_string())?;
     }
     Ok(())
-}
-
-fn wide(value: &str) -> Vec<u16> {
-    value.encode_utf16().chain(Some(0)).collect()
-}
-
-fn write_secret(target: &str, secret: &str) -> Result<(), String> {
-    let mut target = wide(target);
-    let mut username = wide("Aeropeks");
-    let mut blob = secret.as_bytes().to_vec();
-    let credential = CREDENTIALW {
-        Type: CRED_TYPE_GENERIC,
-        TargetName: PWSTR(target.as_mut_ptr()),
-        CredentialBlobSize: blob.len() as u32,
-        CredentialBlob: blob.as_mut_ptr(),
-        Persist: CRED_PERSIST_LOCAL_MACHINE,
-        UserName: PWSTR(username.as_mut_ptr()),
-        ..Default::default()
-    };
-    unsafe { CredWriteW(&credential, 0).map_err(|e| e.to_string()) }
-}
-
-fn restore_secret(target: &str, secret: Option<&str>) -> Result<(), String> {
-    match secret {
-        Some(secret) => write_secret(target, secret),
-        None => {
-            let target = wide(target);
-            unsafe {
-                CredDeleteW(PCWSTR(target.as_ptr()), CRED_TYPE_GENERIC, 0)
-                    .or_else(|error| {
-                        if error.code().0 as u32 == 1168 {
-                            Ok(())
-                        } else {
-                            Err(error)
-                        }
-                    })
-                    .map_err(|e| e.to_string())
-            }
-        }
-    }
-}
-
-fn read_secret(target: &str) -> Result<Option<String>, String> {
-    let target = wide(target);
-    let mut credential = ptr::null_mut::<CREDENTIALW>();
-    unsafe {
-        if let Err(error) = CredReadW(
-            PCWSTR(target.as_ptr()),
-            CRED_TYPE_GENERIC,
-            0,
-            &mut credential,
-        ) {
-            if error.code().0 as u32 == 1168 {
-                return Ok(None);
-            }
-            return Err(error.to_string());
-        }
-        if credential.is_null() {
-            return Ok(None);
-        }
-        let value = {
-            let credential_ref = &*credential;
-            if credential_ref.CredentialBlobSize == 0 {
-                Some(String::new())
-            } else if credential_ref.CredentialBlob.is_null() {
-                None
-            } else {
-                let bytes = std::slice::from_raw_parts(
-                    credential_ref.CredentialBlob,
-                    credential_ref.CredentialBlobSize as usize,
-                );
-                String::from_utf8(bytes.to_vec()).ok()
-            }
-        };
-        CredFree(credential.cast::<c_void>());
-        Ok(value)
-    }
 }
 
 #[cfg(test)]

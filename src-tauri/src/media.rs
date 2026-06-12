@@ -113,61 +113,8 @@ async fn fetch_plex_media(
     None
 }
 
-async fn get_gsmtc_media() -> Result<Option<MediaInfo>, String> {
-    use windows::Media::Control::{
-        GlobalSystemMediaTransportControlsSession, GlobalSystemMediaTransportControlsSessionManager,
-    };
-    let manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
-        .map_err(|e| e.to_string())?
-        .get()
-        .map_err(|e| e.to_string())?;
-    let sessions = manager.GetSessions().map_err(|e| e.to_string())?;
-    let mut best: Option<(i32, GlobalSystemMediaTransportControlsSession)> = None;
-    for session in sessions {
-        let status = session
-            .GetPlaybackInfo()
-            .ok()
-            .and_then(|playback| playback.PlaybackStatus().ok())
-            .map(|status| status.0)
-            .unwrap_or_default();
-        let score = match status {
-            4 => 10,
-            5 => 5,
-            _ => 0,
-        };
-        if best
-            .as_ref()
-            .is_none_or(|(best_score, _)| score > *best_score)
-        {
-            best = Some((score, session));
-        }
-    }
-    let Some((_, session)) = best else {
-        return Ok(None);
-    };
-    let playback = session.GetPlaybackInfo().map_err(|e| e.to_string())?;
-    let properties = session
-        .TryGetMediaPropertiesAsync()
-        .map_err(|e| e.to_string())?
-        .get()
-        .map_err(|e| e.to_string())?;
-    Ok(Some(MediaInfo {
-        title: properties.Title().unwrap_or_default().to_string(),
-        artist: properties.Artist().unwrap_or_default().to_string(),
-        album: properties.AlbumTitle().unwrap_or_default().to_string(),
-        is_playing: playback.PlaybackStatus().unwrap_or_default().0 == 4,
-        thumbnail: None,
-        duration_ms: 0,
-        view_offset_ms: 0,
-        source: "gsmtc".to_string(),
-        session_id: None,
-        machine_id: None,
-        address: None,
-    }))
-}
-
 pub async fn active_media(handle: tauri::AppHandle) -> Result<Option<MediaInfo>, String> {
-    let local = get_gsmtc_media().await.unwrap_or(None);
+    let local = crate::platform::local_media().await.unwrap_or(None);
     let selected = if local.as_ref().is_some_and(|media| media.is_playing) {
         local
     } else {
@@ -282,41 +229,6 @@ async fn plex_control(
     Err("all Plex control attempts failed".to_string())
 }
 
-async fn gsmtc_action(action: &str) -> Result<(), String> {
-    use windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager;
-    let manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
-        .map_err(|e| e.to_string())?
-        .get()
-        .map_err(|e| e.to_string())?;
-    if let Ok(session) = manager.GetCurrentSession() {
-        match action {
-            "play_pause" => {
-                session
-                    .TryTogglePlayPauseAsync()
-                    .map_err(|e| e.to_string())?
-                    .get()
-                    .map_err(|e| e.to_string())?;
-            }
-            "next" => {
-                session
-                    .TrySkipNextAsync()
-                    .map_err(|e| e.to_string())?
-                    .get()
-                    .map_err(|e| e.to_string())?;
-            }
-            "previous" => {
-                session
-                    .TrySkipPreviousAsync()
-                    .map_err(|e| e.to_string())?
-                    .get()
-                    .map_err(|e| e.to_string())?;
-            }
-            _ => return Err("invalid media action".to_string()),
-        }
-    }
-    Ok(())
-}
-
 #[tauri::command]
 pub async fn media_control_unified(
     handle: tauri::AppHandle,
@@ -347,7 +259,7 @@ pub async fn media_control_unified(
         )
         .await
     } else {
-        gsmtc_action(&action).await
+        crate::platform::local_media_action(&action).await
     };
     if result.is_ok() && action == "play_pause" {
         if let Ok(mut current) = handle.state::<MediaState>().current.lock() {

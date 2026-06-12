@@ -6,6 +6,7 @@ mod http;
 mod integrations;
 mod launcher;
 mod media;
+mod platform;
 mod projects;
 mod security;
 mod settings;
@@ -160,7 +161,7 @@ fn toggle_launcher_internal(handle: &tauri::AppHandle) {
 #[tauri::command]
 fn system_power_action(action: String, window: Window) -> Result<(), String> {
     security::require_window(&window, &["main", "launcher-panel"])?;
-    launcher::run_power_action(&action)
+    platform::run_power_action(&action)
 }
 
 #[tauri::command]
@@ -452,48 +453,18 @@ fn main() {
             if let Some(icon) = app.default_window_icon() { tray = tray.icon(icon.clone()); }
             let _ = tray.build(app);
 
-            // Background GSMTC listener
-            let media_shutdown = shutdown.clone();
+            // Event-driven local media refresh (GSMTC on Windows, MPRIS later
+            // on Linux); the slow poll below is the portable fallback.
+            platform::watch_local_media(app_handle_media.clone());
+
+            let h_poll = app_handle_media.clone();
+            let poll_shutdown = shutdown.clone();
             tauri::async_runtime::spawn(async move {
-                use windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager;
-                use windows::Foundation::TypedEventHandler;
-
-                if let Ok(manager_op) = GlobalSystemMediaTransportControlsSessionManager::RequestAsync() {
-                    if let Ok(manager) = manager_op.get() {
-                        let h1 = app_handle_media.clone();
-                        let _ = manager.CurrentSessionChanged(&TypedEventHandler::new(move |_, _| {
-                            let h2 = h1.clone();
-                            tauri::async_runtime::spawn(async move {
-                                if let Ok(update) = media::active_media(h2.clone()).await {
-                                    let _ = h2.emit("media-change", update);
-                                }
-                            });
-                            Ok(())
-                        }));
-
-                        let h3 = app_handle_media.clone();
-                        let _ = manager.SessionsChanged(&TypedEventHandler::new(move |_, _| {
-                            let h4 = h3.clone();
-                            tauri::async_runtime::spawn(async move {
-                                if let Ok(update) = media::active_media(h4.clone()).await {
-                                    let _ = h4.emit("media-change", update);
-                                }
-                            });
-                            Ok(())
-                        }));
-
-                        // Slow fallback refresh; GSMTC change events are the primary signal.
-                        let h_poll = app_handle_media.clone();
-                        let poll_shutdown = media_shutdown.clone();
-                        tauri::async_runtime::spawn(async move {
-                            let mut interval = interval(Duration::from_secs(30));
-                            while !poll_shutdown.load(Ordering::Relaxed) {
-                                interval.tick().await;
-                                if let Ok(update) = media::active_media(h_poll.clone()).await {
-                                    h_poll.emit("media-change", update).ok();
-                                }
-                            }
-                        });
+                let mut interval = interval(Duration::from_secs(30));
+                while !poll_shutdown.load(Ordering::Relaxed) {
+                    interval.tick().await;
+                    if let Ok(update) = media::active_media(h_poll.clone()).await {
+                        h_poll.emit("media-change", update).ok();
                     }
                 }
             });

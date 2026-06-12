@@ -1,22 +1,18 @@
-use std::os::windows::process::CommandExt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, Window};
-use walkdir::WalkDir;
 
-use crate::security;
-
-const CREATE_NO_WINDOW: u32 = 0x08000000;
+use crate::{platform, security};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SearchResult {
-    id: String,
-    title: String,
-    description: String,
-    icon: String,
-    action_type: String,
-    action_value: String,
+    pub(crate) id: String,
+    pub(crate) title: String,
+    pub(crate) description: String,
+    pub(crate) icon: String,
+    pub(crate) action_type: String,
+    pub(crate) action_value: String,
 }
 
 #[tauri::command]
@@ -44,26 +40,7 @@ pub fn search_query(query: String, window: Window) -> Result<Vec<SearchResult>, 
     }
 
     let mut results = system_results(&normalized);
-    for root in start_menu_roots() {
-        for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
-            let path = entry.path();
-            let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
-                continue;
-            };
-            if path.extension().and_then(|ext| ext.to_str()) == Some("lnk")
-                && file_name.to_lowercase().contains(&normalized)
-            {
-                results.push(SearchResult {
-                    id: format!("app-{}", path.display()),
-                    title: file_name.trim_end_matches(".lnk").to_string(),
-                    description: path.display().to_string(),
-                    icon: "AppWindow".to_string(),
-                    action_type: "app".to_string(),
-                    action_value: path.display().to_string(),
-                });
-            }
-        }
-    }
+    results.extend(platform::installed_app_results(&normalized));
     Ok(results)
 }
 
@@ -87,23 +64,6 @@ fn system_results(query: &str) -> Vec<SearchResult> {
     .collect()
 }
 
-fn start_menu_roots() -> Vec<PathBuf> {
-    let mut roots = vec![PathBuf::from(
-        r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs",
-    )];
-    if let Some(profile) = std::env::var_os("USERPROFILE") {
-        roots.push(
-            PathBuf::from(profile).join(r"AppData\Roaming\Microsoft\Windows\Start Menu\Programs"),
-        );
-    }
-    roots
-}
-
-fn allowed_shortcut(path: &Path) -> bool {
-    path.extension().and_then(|ext| ext.to_str()) == Some("lnk")
-        && start_menu_roots().iter().any(|root| path.starts_with(root))
-}
-
 #[tauri::command]
 pub fn launch_result(
     handle: tauri::AppHandle,
@@ -121,12 +81,10 @@ pub fn launch_result(
         }
         "app" => {
             let path = PathBuf::from(result.action_value);
-            if !allowed_shortcut(&path) {
-                return Err("application is outside the Start Menu".to_string());
-            }
+            platform::validate_app_target(&path)?;
             open::that(path).map_err(|e| e.to_string())?;
         }
-        "system" => run_power_action(
+        "system" => platform::run_power_action(
             result
                 .id
                 .strip_prefix("sys-")
@@ -136,35 +94,6 @@ pub fn launch_result(
     }
     if let Some(window) = handle.get_webview_window("launcher-panel") {
         let _ = window.hide();
-    }
-    Ok(())
-}
-
-pub fn run_power_action(action: &str) -> Result<(), String> {
-    match action {
-        "shutdown" => {
-            std::process::Command::new("shutdown")
-                .args(["/s", "/t", "0"])
-                .creation_flags(CREATE_NO_WINDOW)
-                .spawn()
-                .map_err(|e| e.to_string())?;
-        }
-        "restart" => {
-            std::process::Command::new("shutdown")
-                .args(["/r", "/t", "0"])
-                .creation_flags(CREATE_NO_WINDOW)
-                .spawn()
-                .map_err(|e| e.to_string())?;
-        }
-        "sleep" => unsafe {
-            if !windows::Win32::System::Power::SetSuspendState(false, false, false).as_bool() {
-                return Err("Windows rejected the sleep request".to_string());
-            }
-        },
-        "lock" => unsafe {
-            windows::Win32::System::Shutdown::LockWorkStation().map_err(|e| e.to_string())?;
-        },
-        _ => return Err("invalid power action".to_string()),
     }
     Ok(())
 }
