@@ -4,28 +4,11 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use base64::{engine::general_purpose, Engine as _};
-use portable_pty::{ChildKiller, CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySystem};
+use portable_pty::{ChildKiller, MasterPty, NativePtySystem, PtySize, PtySystem};
 use serde::Serialize;
 use tauri::{Emitter, Manager, Window};
 
 use crate::security;
-
-fn powershell_command() -> CommandBuilder {
-    let shell = if std::process::Command::new("pwsh.exe")
-        .arg("-NoLogo")
-        .arg("-NoProfile")
-        .arg("-Command")
-        .arg("exit")
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
-    {
-        "pwsh.exe"
-    } else {
-        "powershell.exe"
-    };
-    CommandBuilder::new(shell)
-}
 
 #[derive(Serialize, Clone)]
 struct PtyPayload {
@@ -87,20 +70,7 @@ pub fn start_pty(
         })
         .map_err(|e| e.to_string())?;
 
-    let mut cmd = powershell_command();
-    cmd.arg("-NoLogo");
-    if let Some(command) = command.filter(|value| !value.trim().is_empty()) {
-        cmd.arg("-Command");
-        cmd.arg(command);
-    } else {
-        cmd.arg("-NoExit");
-        cmd.arg("-Command");
-        cmd.arg(
-            "if (Get-Command oh-my-posh -ErrorAction SilentlyContinue) { \
-             oh-my-posh init pwsh | Invoke-Expression \
-             }",
-        );
-    }
+    let cmd = crate::platform::shell_command(command);
 
     let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
     *state.killer.lock().map_err(|e| e.to_string())? = Some(child.clone_killer());

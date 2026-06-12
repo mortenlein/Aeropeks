@@ -1,16 +1,11 @@
-use std::ffi::c_void;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::ptr;
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
-use windows::core::{PCWSTR, PWSTR};
-use windows::Win32::Security::Credentials::{
-    CredDeleteW, CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE,
-    CRED_TYPE_GENERIC,
-};
+
+use crate::platform::{read_secret, restore_secret, write_secret};
 
 const PLEX_TOKEN_TARGET: &str = "Aeropeks/PlexToken";
 const OBS_PASSWORD_TARGET: &str = "Aeropeks/ObsWebSocketPassword";
@@ -335,13 +330,17 @@ fn migrate_legacy_modules(content: &str, settings: &mut AppSettings) {
     settings.modules = ModulesConfig::legacy(legacy_calendar);
 }
 
-pub fn load(handle: &tauri::AppHandle) -> AppSettings {
+/// Load settings from the file only, without touching the credential store.
+/// Safe to call on the main thread: the credential store can block on an
+/// unlock prompt (Secret Service on Linux), so secret loading happens in
+/// `load`, which callers run off the UI path.
+pub fn load_file(handle: &tauri::AppHandle) -> AppSettings {
     let Ok(path) = settings_path(handle) else {
         return AppSettings::default();
     };
     migrate_file(handle, &path);
 
-    let mut settings = match fs::read_to_string(&path) {
+    match fs::read_to_string(&path) {
         Ok(content) => match serde_json::from_str::<AppSettings>(&content) {
             Ok(mut settings) => {
                 migrate_legacy_modules(&content, &mut settings);
@@ -355,6 +354,13 @@ pub fn load(handle: &tauri::AppHandle) -> AppSettings {
             }
         },
         Err(_) => AppSettings::default(),
+    }
+}
+
+pub fn load(handle: &tauri::AppHandle) -> AppSettings {
+    let mut settings = load_file(handle);
+    let Ok(path) = settings_path(handle) else {
+        return settings;
     };
 
     let plaintext_plex = settings.plex_token.clone();
@@ -417,7 +423,8 @@ fn persist_secrets(settings: &AppSettings) -> Result<(), String> {
 }
 
 fn write_file(path: &Path, settings: &AppSettings) -> Result<(), String> {
-    let content = serde_json::to_string_pretty(&settings.without_secrets()).map_err(|e| e.to_string())?;
+    let content =
+        serde_json::to_string_pretty(&settings.without_secrets()).map_err(|e| e.to_string())?;
     let temporary = path.with_extension("json.tmp");
     let backup = path.with_extension("json.bak");
     fs::write(&temporary, content).map_err(|e| e.to_string())?;
@@ -439,83 +446,6 @@ fn write_file(path: &Path, settings: &AppSettings) -> Result<(), String> {
         fs::remove_file(backup).map_err(|e| e.to_string())?;
     }
     Ok(())
-}
-
-fn wide(value: &str) -> Vec<u16> {
-    value.encode_utf16().chain(Some(0)).collect()
-}
-
-fn write_secret(target: &str, secret: &str) -> Result<(), String> {
-    let mut target = wide(target);
-    let mut username = wide("Aeropeks");
-    let mut blob = secret.as_bytes().to_vec();
-    let credential = CREDENTIALW {
-        Type: CRED_TYPE_GENERIC,
-        TargetName: PWSTR(target.as_mut_ptr()),
-        CredentialBlobSize: blob.len() as u32,
-        CredentialBlob: blob.as_mut_ptr(),
-        Persist: CRED_PERSIST_LOCAL_MACHINE,
-        UserName: PWSTR(username.as_mut_ptr()),
-        ..Default::default()
-    };
-    unsafe { CredWriteW(&credential, 0).map_err(|e| e.to_string()) }
-}
-
-fn restore_secret(target: &str, secret: Option<&str>) -> Result<(), String> {
-    match secret {
-        Some(secret) => write_secret(target, secret),
-        None => {
-            let target = wide(target);
-            unsafe {
-                CredDeleteW(PCWSTR(target.as_ptr()), CRED_TYPE_GENERIC, 0)
-                    .or_else(|error| {
-                        if error.code().0 as u32 == 1168 {
-                            Ok(())
-                        } else {
-                            Err(error)
-                        }
-                    })
-                    .map_err(|e| e.to_string())
-            }
-        }
-    }
-}
-
-fn read_secret(target: &str) -> Result<Option<String>, String> {
-    let target = wide(target);
-    let mut credential = ptr::null_mut::<CREDENTIALW>();
-    unsafe {
-        if let Err(error) = CredReadW(
-            PCWSTR(target.as_ptr()),
-            CRED_TYPE_GENERIC,
-            0,
-            &mut credential,
-        ) {
-            if error.code().0 as u32 == 1168 {
-                return Ok(None);
-            }
-            return Err(error.to_string());
-        }
-        if credential.is_null() {
-            return Ok(None);
-        }
-        let value = {
-            let credential_ref = &*credential;
-            if credential_ref.CredentialBlobSize == 0 {
-                Some(String::new())
-            } else if credential_ref.CredentialBlob.is_null() {
-                None
-            } else {
-                let bytes = std::slice::from_raw_parts(
-                    credential_ref.CredentialBlob,
-                    credential_ref.CredentialBlobSize as usize,
-                );
-                String::from_utf8(bytes.to_vec()).ok()
-            }
-        };
-        CredFree(credential.cast::<c_void>());
-        Ok(value)
-    }
 }
 
 #[cfg(test)]

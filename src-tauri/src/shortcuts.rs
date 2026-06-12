@@ -206,7 +206,9 @@ fn find_icon_href(html: &str) -> Option<String> {
         let start = from + found;
         let end = lower[start..].find('>').map(|e| start + e)?;
         let tag = &html[start..end];
-        let rel = extract_attr(tag, "rel").unwrap_or_default().to_ascii_lowercase();
+        let rel = extract_attr(tag, "rel")
+            .unwrap_or_default()
+            .to_ascii_lowercase();
         let is_icon = rel
             .split_whitespace()
             .any(|part| part == "icon" || part == "apple-touch-icon");
@@ -316,14 +318,23 @@ mod tests {
             Some("/apple.png".to_string())
         );
         // stylesheet links and mask icons are not favicons
-        assert_eq!(find_icon_href(r#"<link rel="stylesheet" href="/x.css">"#), None);
-        assert_eq!(find_icon_href(r#"<link rel="mask-icon" href="/m.svg">"#), None);
+        assert_eq!(
+            find_icon_href(r#"<link rel="stylesheet" href="/x.css">"#),
+            None
+        );
+        assert_eq!(
+            find_icon_href(r#"<link rel="mask-icon" href="/m.svg">"#),
+            None
+        );
         assert_eq!(find_icon_href("<p>no links</p>"), None);
     }
 
     #[test]
     fn generic_content_types_fall_back_to_path_extension() {
-        assert_eq!(mime_from_path("https://x.com/favicon.ico"), Some("image/x-icon"));
+        assert_eq!(
+            mime_from_path("https://x.com/favicon.ico"),
+            Some("image/x-icon")
+        );
         assert_eq!(mime_from_path("https://x.com/i.png?v=2"), Some("image/png"));
         assert_eq!(mime_from_path("https://x.com/page.html"), None);
     }

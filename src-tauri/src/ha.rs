@@ -112,10 +112,9 @@ async fn poll_once(app: &AppHandle) -> Duration {
 
 async fn build_snapshot(app: &AppHandle, settings: &AppSettings) -> Option<HaSnapshot> {
     let m = &settings.modules;
-    let vacuum_on = m.vacuum.enabled
-        && security::validate_ha_entity_id(&m.vacuum.entity_id).is_ok();
-    let mower_on = m.mower.enabled
-        && security::validate_ha_entity_id(&m.mower.entity_id).is_ok();
+    let vacuum_on =
+        m.vacuum.enabled && security::validate_ha_entity_id(&m.vacuum.entity_id).is_ok();
+    let mower_on = m.mower.enabled && security::validate_ha_entity_id(&m.mower.entity_id).is_ok();
     let phone_on = m.phone.enabled && security::validate_ha_slug(&m.phone.device_slug).is_ok();
 
     if settings.homeassistant_url.is_empty()
@@ -173,7 +172,10 @@ fn state_of(states: &HashMap<String, String>, entity: &str) -> String {
 }
 
 fn object_id(entity_id: &str) -> &str {
-    entity_id.split_once('.').map(|(_, o)| o).unwrap_or_default()
+    entity_id
+        .split_once('.')
+        .map(|(_, o)| o)
+        .unwrap_or_default()
 }
 
 fn vacuum_from(states: &HashMap<String, String>, entity_id: &str) -> VacuumStatus {

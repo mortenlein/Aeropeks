@@ -494,8 +494,8 @@ function Settings() {
           <SetCheck
             on={hideNativeTaskbar}
             onChange={setHideNativeTaskbar}
-            label="Hide the native Windows taskbar"
-            help="Advanced replacement mode. Leave off unless you want Aeropeks to take over more shell surface."
+            label="Hide the native taskbar / desktop panel"
+            help="Advanced replacement mode. Leave off unless you want Aeropeks to take over more shell surface. On Linux this auto-hides the COSMIC top panel."
           />
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <Btn onClick={handleRestoreShell}>Restore Windows Shell</Btn>

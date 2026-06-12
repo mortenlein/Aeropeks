@@ -6,6 +6,7 @@ mod http;
 mod integrations;
 mod launcher;
 mod media;
+mod platform;
 mod projects;
 mod security;
 mod settings;
@@ -160,7 +161,7 @@ fn toggle_launcher_internal(handle: &tauri::AppHandle) {
 #[tauri::command]
 fn system_power_action(action: String, window: Window) -> Result<(), String> {
     security::require_window(&window, &["main", "launcher-panel"])?;
-    launcher::run_power_action(&action)
+    platform::run_power_action(&action)
 }
 
 #[tauri::command]
@@ -219,8 +220,8 @@ fn open_demo_mode(app: AppHandle, window: Window) -> Result<(), String> {
     // Panels: player centered, terminal left, launcher right — below bar+popovers.
     let panel_layout: &[(&str, i32, i32)] = &[
         ("expanded-player", (w - 640) / 2, 440),
-        ("terminal-panel",  20,            440),
-        ("launcher-panel",  w - 720,       440),
+        ("terminal-panel", 20, 440),
+        ("launcher-panel", w - 720, 440),
     ];
     for (label, x, y) in panel_layout {
         if let Some(panel) = app.get_webview_window(label) {
@@ -236,8 +237,8 @@ fn open_demo_mode(app: AppHandle, window: Window) -> Result<(), String> {
     // Positioned near the matching bar items along the right side.
     let popover_y = shell::BAR_HEIGHT + 4;
     let demo_layout: &[(&str, i32, i32)] = &[
-        ("demo-weather",  w - 480, popover_y),
-        ("demo-usage",    w - 880, popover_y),
+        ("demo-weather", w - 480, popover_y),
+        ("demo-usage", w - 880, popover_y),
         ("demo-projects", w - 1330, popover_y),
     ];
     for (label, x, y) in demo_layout {
@@ -264,8 +265,14 @@ fn open_demo_mode(app: AppHandle, window: Window) -> Result<(), String> {
 }
 
 fn exit_demo_mode_internal(app: &AppHandle) {
-    for label in &["demo-weather", "demo-usage", "demo-projects",
-                   "expanded-player", "terminal-panel", "launcher-panel"] {
+    for label in &[
+        "demo-weather",
+        "demo-usage",
+        "demo-projects",
+        "expanded-player",
+        "terminal-panel",
+        "launcher-panel",
+    ] {
         if let Some(w) = app.get_webview_window(label) {
             let _ = w.hide();
         }
@@ -405,7 +412,10 @@ fn main() {
             let first_run = settings::settings_path(app.handle())
                 .map(|path| !path.exists())
                 .unwrap_or(false);
-            let initial_settings = settings::load(app.handle());
+            // File-only load: the credential store can block on an unlock
+            // prompt (Secret Service on Linux), which must not keep the bar
+            // from appearing. Secrets are attached in a thread below.
+            let initial_settings = settings::load_file(app.handle());
             {
                 if let Ok(mut lock) = shared.lock() {
                     *lock = initial_settings.clone();
@@ -422,6 +432,19 @@ fn main() {
                     shutdown.clone(),
                 )?;
             }
+
+            let secrets_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let full_settings = settings::load(&secrets_handle);
+                let public_settings = full_settings.without_secrets();
+                let state = secrets_handle.state::<SharedSettings>();
+                if let Ok(mut lock) = state.lock() {
+                    *lock = full_settings;
+                }
+                // Wake the HA poller and refresh the bar now that tokens exist.
+                secrets_handle.state::<ha::HaRefresh>().0.notify_one();
+                let _ = secrets_handle.emit_to("main", "settings-changed", public_settings);
+            });
 
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let settings_i =
@@ -452,48 +475,18 @@ fn main() {
             if let Some(icon) = app.default_window_icon() { tray = tray.icon(icon.clone()); }
             let _ = tray.build(app);
 
-            // Background GSMTC listener
-            let media_shutdown = shutdown.clone();
+            // Event-driven local media refresh (GSMTC on Windows, MPRIS later
+            // on Linux); the slow poll below is the portable fallback.
+            platform::watch_local_media(app_handle_media.clone());
+
+            let h_poll = app_handle_media.clone();
+            let poll_shutdown = shutdown.clone();
             tauri::async_runtime::spawn(async move {
-                use windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager;
-                use windows::Foundation::TypedEventHandler;
-
-                if let Ok(manager_op) = GlobalSystemMediaTransportControlsSessionManager::RequestAsync() {
-                    if let Ok(manager) = manager_op.get() {
-                        let h1 = app_handle_media.clone();
-                        let _ = manager.CurrentSessionChanged(&TypedEventHandler::new(move |_, _| {
-                            let h2 = h1.clone();
-                            tauri::async_runtime::spawn(async move {
-                                if let Ok(update) = media::active_media(h2.clone()).await {
-                                    let _ = h2.emit("media-change", update);
-                                }
-                            });
-                            Ok(())
-                        }));
-
-                        let h3 = app_handle_media.clone();
-                        let _ = manager.SessionsChanged(&TypedEventHandler::new(move |_, _| {
-                            let h4 = h3.clone();
-                            tauri::async_runtime::spawn(async move {
-                                if let Ok(update) = media::active_media(h4.clone()).await {
-                                    let _ = h4.emit("media-change", update);
-                                }
-                            });
-                            Ok(())
-                        }));
-
-                        // Slow fallback refresh; GSMTC change events are the primary signal.
-                        let h_poll = app_handle_media.clone();
-                        let poll_shutdown = media_shutdown.clone();
-                        tauri::async_runtime::spawn(async move {
-                            let mut interval = interval(Duration::from_secs(30));
-                            while !poll_shutdown.load(Ordering::Relaxed) {
-                                interval.tick().await;
-                                if let Ok(update) = media::active_media(h_poll.clone()).await {
-                                    h_poll.emit("media-change", update).ok();
-                                }
-                            }
-                        });
+                let mut interval = interval(Duration::from_secs(30));
+                while !poll_shutdown.load(Ordering::Relaxed) {
+                    interval.tick().await;
+                    if let Ok(update) = media::active_media(h_poll.clone()).await {
+                        h_poll.emit("media-change", update).ok();
                     }
                 }
             });
@@ -553,14 +546,12 @@ fn main() {
                         let _ = shell::restore(window.app_handle());
                     }
                 }
-                tauri::WindowEvent::Destroyed => {
-                    if window.label() == "main" {
-                        window
-                            .state::<ShutdownState>()
-                            .0
-                            .store(true, Ordering::Relaxed);
-                        let _ = shell::restore(window.app_handle());
-                    }
+                tauri::WindowEvent::Destroyed if window.label() == "main" => {
+                    window
+                        .state::<ShutdownState>()
+                        .0
+                        .store(true, Ordering::Relaxed);
+                    let _ = shell::restore(window.app_handle());
                 }
                 _ => {}
             }
