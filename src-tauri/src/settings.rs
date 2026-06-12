@@ -330,13 +330,17 @@ fn migrate_legacy_modules(content: &str, settings: &mut AppSettings) {
     settings.modules = ModulesConfig::legacy(legacy_calendar);
 }
 
-pub fn load(handle: &tauri::AppHandle) -> AppSettings {
+/// Load settings from the file only, without touching the credential store.
+/// Safe to call on the main thread: the credential store can block on an
+/// unlock prompt (Secret Service on Linux), so secret loading happens in
+/// `load`, which callers run off the UI path.
+pub fn load_file(handle: &tauri::AppHandle) -> AppSettings {
     let Ok(path) = settings_path(handle) else {
         return AppSettings::default();
     };
     migrate_file(handle, &path);
 
-    let mut settings = match fs::read_to_string(&path) {
+    match fs::read_to_string(&path) {
         Ok(content) => match serde_json::from_str::<AppSettings>(&content) {
             Ok(mut settings) => {
                 migrate_legacy_modules(&content, &mut settings);
@@ -350,6 +354,13 @@ pub fn load(handle: &tauri::AppHandle) -> AppSettings {
             }
         },
         Err(_) => AppSettings::default(),
+    }
+}
+
+pub fn load(handle: &tauri::AppHandle) -> AppSettings {
+    let mut settings = load_file(handle);
+    let Ok(path) = settings_path(handle) else {
+        return settings;
     };
 
     let plaintext_plex = settings.plex_token.clone();
@@ -412,7 +423,8 @@ fn persist_secrets(settings: &AppSettings) -> Result<(), String> {
 }
 
 fn write_file(path: &Path, settings: &AppSettings) -> Result<(), String> {
-    let content = serde_json::to_string_pretty(&settings.without_secrets()).map_err(|e| e.to_string())?;
+    let content =
+        serde_json::to_string_pretty(&settings.without_secrets()).map_err(|e| e.to_string())?;
     let temporary = path.with_extension("json.tmp");
     let backup = path.with_extension("json.bak");
     fs::write(&temporary, content).map_err(|e| e.to_string())?;

@@ -220,8 +220,8 @@ fn open_demo_mode(app: AppHandle, window: Window) -> Result<(), String> {
     // Panels: player centered, terminal left, launcher right — below bar+popovers.
     let panel_layout: &[(&str, i32, i32)] = &[
         ("expanded-player", (w - 640) / 2, 440),
-        ("terminal-panel",  20,            440),
-        ("launcher-panel",  w - 720,       440),
+        ("terminal-panel", 20, 440),
+        ("launcher-panel", w - 720, 440),
     ];
     for (label, x, y) in panel_layout {
         if let Some(panel) = app.get_webview_window(label) {
@@ -237,8 +237,8 @@ fn open_demo_mode(app: AppHandle, window: Window) -> Result<(), String> {
     // Positioned near the matching bar items along the right side.
     let popover_y = shell::BAR_HEIGHT + 4;
     let demo_layout: &[(&str, i32, i32)] = &[
-        ("demo-weather",  w - 480, popover_y),
-        ("demo-usage",    w - 880, popover_y),
+        ("demo-weather", w - 480, popover_y),
+        ("demo-usage", w - 880, popover_y),
         ("demo-projects", w - 1330, popover_y),
     ];
     for (label, x, y) in demo_layout {
@@ -265,8 +265,14 @@ fn open_demo_mode(app: AppHandle, window: Window) -> Result<(), String> {
 }
 
 fn exit_demo_mode_internal(app: &AppHandle) {
-    for label in &["demo-weather", "demo-usage", "demo-projects",
-                   "expanded-player", "terminal-panel", "launcher-panel"] {
+    for label in &[
+        "demo-weather",
+        "demo-usage",
+        "demo-projects",
+        "expanded-player",
+        "terminal-panel",
+        "launcher-panel",
+    ] {
         if let Some(w) = app.get_webview_window(label) {
             let _ = w.hide();
         }
@@ -406,7 +412,10 @@ fn main() {
             let first_run = settings::settings_path(app.handle())
                 .map(|path| !path.exists())
                 .unwrap_or(false);
-            let initial_settings = settings::load(app.handle());
+            // File-only load: the credential store can block on an unlock
+            // prompt (Secret Service on Linux), which must not keep the bar
+            // from appearing. Secrets are attached in a thread below.
+            let initial_settings = settings::load_file(app.handle());
             {
                 if let Ok(mut lock) = shared.lock() {
                     *lock = initial_settings.clone();
@@ -423,6 +432,19 @@ fn main() {
                     shutdown.clone(),
                 )?;
             }
+
+            let secrets_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let full_settings = settings::load(&secrets_handle);
+                let public_settings = full_settings.without_secrets();
+                let state = secrets_handle.state::<SharedSettings>();
+                if let Ok(mut lock) = state.lock() {
+                    *lock = full_settings;
+                }
+                // Wake the HA poller and refresh the bar now that tokens exist.
+                secrets_handle.state::<ha::HaRefresh>().0.notify_one();
+                let _ = secrets_handle.emit_to("main", "settings-changed", public_settings);
+            });
 
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let settings_i =
