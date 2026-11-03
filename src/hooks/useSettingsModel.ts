@@ -30,6 +30,7 @@ export function useSettingsModel() {
   const [usageHiddenProviders, setUsageHiddenProviders] = useState<string[]>([]);
   const [reserveScreenSpace, setReserveScreenSpace] = useState(true);
   const [hideNativeTaskbar, setHideNativeTaskbar] = useState(false);
+  const [launchAtLogin, setLaunchAtLogin] = useState(false);
   const [shellMessage, setShellMessage] = useState("");
   const [haUrl, setHaUrl] = useState("");
   const [haToken, setHaToken] = useState("");
@@ -74,6 +75,10 @@ export function useSettingsModel() {
     // emits `secrets-ready` once they are attached. Listen before the first
     // load so neither ordering can miss them. Unlike a focus refetch, this
     // fires once at startup and never discards edits in progress.
+    invoke<boolean>("get_autostart")
+      .then(setLaunchAtLogin)
+      .catch(() => {});
+
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     listen("secrets-ready", () => void load())
@@ -155,6 +160,17 @@ export function useSettingsModel() {
     }
   };
 
+  // Launch at login lives in the OS (registry / autostart entry), not in
+  // settings.json, so it applies immediately rather than on Save.
+  const toggleLaunchAtLogin = async (enabled: boolean) => {
+    try {
+      await invoke("set_autostart", { enabled });
+      setLaunchAtLogin(enabled);
+    } catch (error) {
+      setShellMessage(`Launch at login failed: ${String(error)}`);
+    }
+  };
+
   const handleRestoreShell = async () => {
     try {
       await invoke("restore_shell_state");
@@ -207,6 +223,8 @@ export function useSettingsModel() {
     githubToken,
     hideNativeTaskbar,
     isSearching,
+    launchAtLogin,
+    toggleLaunchAtLogin,
     obsPassword,
     obsUrl,
     plexToken,

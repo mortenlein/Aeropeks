@@ -159,6 +159,8 @@ function Settings() {
     setReserveScreenSpace,
     hideNativeTaskbar,
     setHideNativeTaskbar,
+    launchAtLogin,
+    toggleLaunchAtLogin,
     handleRestoreShell,
     shellMessage,
     accentColor,
@@ -485,6 +487,12 @@ function Settings() {
 
         {/* Shell Companion */}
         <SetSection title="Shell Companion">
+          <SetCheck
+            on={launchAtLogin}
+            onChange={toggleLaunchAtLogin}
+            label="Launch Aeropeks at login"
+            help="Starts the bar automatically when you sign in. Applies immediately."
+          />
           <SetCheck
             on={reserveScreenSpace}
             onChange={setReserveScreenSpace}
