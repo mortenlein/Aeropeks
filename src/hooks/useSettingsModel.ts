@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type {
   AppSettings,
   LocationResult,
@@ -39,31 +40,56 @@ export function useSettingsModel() {
   const [pinnedShortcuts, setPinnedShortcuts] = useState<PinnedShortcut[]>([]);
 
   useEffect(() => {
-    invoke<AppSettings>("get_settings")
-      .then((settings) => {
-        setPlexUrl(settings.plex_url);
-        setPlexToken(settings.plex_token);
-        setAccentColor(settings.accent_color);
-        setShortcuts(settings.terminal_shortcuts);
-        setWeatherLocation(settings.weather_location);
-        setWeatherLat(settings.weather_lat);
-        setWeatherLon(settings.weather_lon);
-        setSearchQuery(settings.weather_location);
-        setObsUrl(settings.obs_websocket_url);
-        setObsPassword(settings.obs_websocket_password);
-        setGithubToken(settings.github_token);
-        setUsageLimitsUrl(settings.usage_limits_url);
-        setUsageHiddenProviders(settings.usage_hidden_providers ?? []);
-        setUse24h(settings.use_24h);
-        setReserveScreenSpace(settings.reserve_screen_space);
-        setHideNativeTaskbar(settings.hide_native_taskbar);
-        setHaUrl(settings.homeassistant_url);
-        setHaToken(settings.homeassistant_token);
-        setHaPollSeconds(settings.homeassistant_poll_seconds ?? 30);
-        setPinnedShortcuts(settings.pinned_shortcuts ?? []);
-        setModules(settings.modules ?? defaultModules());
+    const applySettings = (settings: AppSettings) => {
+      setPlexUrl(settings.plex_url);
+      setPlexToken(settings.plex_token);
+      setAccentColor(settings.accent_color);
+      setShortcuts(settings.terminal_shortcuts);
+      setWeatherLocation(settings.weather_location);
+      setWeatherLat(settings.weather_lat);
+      setWeatherLon(settings.weather_lon);
+      setSearchQuery(settings.weather_location);
+      setObsUrl(settings.obs_websocket_url);
+      setObsPassword(settings.obs_websocket_password);
+      setGithubToken(settings.github_token);
+      setUsageLimitsUrl(settings.usage_limits_url);
+      setUsageHiddenProviders(settings.usage_hidden_providers ?? []);
+      setUse24h(settings.use_24h);
+      setReserveScreenSpace(settings.reserve_screen_space);
+      setHideNativeTaskbar(settings.hide_native_taskbar);
+      setHaUrl(settings.homeassistant_url);
+      setHaToken(settings.homeassistant_token);
+      setHaPollSeconds(settings.homeassistant_poll_seconds ?? 30);
+      setPinnedShortcuts(settings.pinned_shortcuts ?? []);
+      setModules(settings.modules ?? defaultModules());
+    };
+
+    const load = () =>
+      invoke<AppSettings>("get_settings")
+        .then(applySettings)
+        .catch((error) => setShellMessage(`Settings load failed: ${String(error)}`));
+
+    // The settings webview is created hidden at startup, before the background
+    // thread finishes reading secrets from the credential store; the backend
+    // emits `secrets-ready` once they are attached. Listen before the first
+    // load so neither ordering can miss them. Unlike a focus refetch, this
+    // fires once at startup and never discards edits in progress.
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    listen("secrets-ready", () => void load())
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
       })
-      .catch((error) => setShellMessage(`Settings load failed: ${String(error)}`));
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) void load();
+      });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }, []);
 
   const handleSearch = async (query: string) => {

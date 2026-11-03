@@ -67,6 +67,10 @@ fn show_terminal_context_menu(
     Ok(())
 }
 
+/// Set once the user saves settings, so the startup secrets thread never
+/// replaces newer in-memory settings with what it read from disk.
+static SETTINGS_SAVED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 #[tauri::command]
 fn save_settings(
     settings: AppSettings,
@@ -78,6 +82,7 @@ fn save_settings(
     settings::save(&handle, &settings)?;
 
     let mut current_settings = state.lock().map_err(|e| e.to_string())?;
+    SETTINGS_SAVED.store(true, std::sync::atomic::Ordering::SeqCst);
     let previous_settings = current_settings.clone();
     *current_settings = settings.clone();
     handle
@@ -439,10 +444,16 @@ fn main() {
                 let public_settings = full_settings.without_secrets();
                 let state = secrets_handle.state::<SharedSettings>();
                 if let Ok(mut lock) = state.lock() {
+                    if SETTINGS_SAVED.load(std::sync::atomic::Ordering::SeqCst) {
+                        // The user already saved; their settings are newer.
+                        return;
+                    }
                     *lock = full_settings;
                 }
                 // Wake the HA poller and refresh the bar now that tokens exist.
                 secrets_handle.state::<ha::HaRefresh>().0.notify_one();
+                // The settings window may have loaded before the secrets did.
+                let _ = secrets_handle.emit_to("settings", "secrets-ready", ());
                 let _ = secrets_handle.emit_to("main", "settings-changed", public_settings);
             });
 

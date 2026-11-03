@@ -61,7 +61,7 @@ pub fn install_bar(
         unsafe {
             SetWindowPos(
                 hwnd,
-                HWND_TOPMOST,
+                Some(HWND_TOPMOST),
                 0,
                 0,
                 width as i32,
@@ -156,7 +156,7 @@ fn maintain_app_bar(window: &tauri::WebviewWindow) -> Result<(), String> {
         let height = window.inner_size().map_err(|e| e.to_string())?.height;
         SetWindowPos(
             hwnd,
-            HWND_TOPMOST,
+            Some(HWND_TOPMOST),
             0,
             0,
             width as i32,
@@ -211,10 +211,7 @@ fn cleanup_app_bar(hwnd: HWND, edge: u32) {
     }
 }
 
-unsafe extern "system" fn enum_native_taskbar(
-    hwnd: HWND,
-    lparam: LPARAM,
-) -> windows::Win32::Foundation::BOOL {
+unsafe extern "system" fn enum_native_taskbar(hwnd: HWND, lparam: LPARAM) -> windows::core::BOOL {
     let visible = *(lparam.0 as *const bool);
     let mut class_name = [0u16; 256];
     let length = GetClassNameW(hwnd, &mut class_name);
@@ -272,7 +269,7 @@ pub fn restore_bar(handle: &AppHandle) -> Result<(), String> {
 unsafe extern "system" fn nudge_window_if_stuck(
     hwnd: HWND,
     _lparam: LPARAM,
-) -> windows::Win32::Foundation::BOOL {
+) -> windows::core::BOOL {
     if !IsWindowVisible(hwnd).as_bool() {
         return true.into();
     }
@@ -313,7 +310,7 @@ unsafe extern "system" fn nudge_window_if_stuck(
     let dwm_offset = visible_top - rect.top;
     let _ = SetWindowPos(
         hwnd,
-        HWND(std::ptr::null_mut()),
+        None,
         rect.left,
         BAR_HEIGHT - dwm_offset,
         rect.right - rect.left,
@@ -461,7 +458,7 @@ pub fn run_power_action(action: &str) -> Result<(), String> {
                 .map_err(|e| e.to_string())?;
         }
         "sleep" => unsafe {
-            if !windows::Win32::System::Power::SetSuspendState(false, false, false).as_bool() {
+            if !windows::Win32::System::Power::SetSuspendState(false, false, false) {
                 return Err("Windows rejected the sleep request".to_string());
             }
         },
@@ -481,7 +478,7 @@ pub async fn local_media() -> Result<Option<MediaInfo>, String> {
     };
     let manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
         .map_err(|e| e.to_string())?
-        .get()
+        .join()
         .map_err(|e| e.to_string())?;
     let sessions = manager.GetSessions().map_err(|e| e.to_string())?;
     let mut best: Option<(i32, GlobalSystemMediaTransportControlsSession)> = None;
@@ -511,7 +508,7 @@ pub async fn local_media() -> Result<Option<MediaInfo>, String> {
     let properties = session
         .TryGetMediaPropertiesAsync()
         .map_err(|e| e.to_string())?
-        .get()
+        .join()
         .map_err(|e| e.to_string())?;
     Ok(Some(MediaInfo {
         title: properties.Title().unwrap_or_default().to_string(),
@@ -532,7 +529,7 @@ pub async fn local_media_action(action: &str) -> Result<(), String> {
     use windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager;
     let manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
         .map_err(|e| e.to_string())?
-        .get()
+        .join()
         .map_err(|e| e.to_string())?;
     if let Ok(session) = manager.GetCurrentSession() {
         match action {
@@ -540,21 +537,21 @@ pub async fn local_media_action(action: &str) -> Result<(), String> {
                 session
                     .TryTogglePlayPauseAsync()
                     .map_err(|e| e.to_string())?
-                    .get()
+                    .join()
                     .map_err(|e| e.to_string())?;
             }
             "next" => {
                 session
                     .TrySkipNextAsync()
                     .map_err(|e| e.to_string())?
-                    .get()
+                    .join()
                     .map_err(|e| e.to_string())?;
             }
             "previous" => {
                 session
                     .TrySkipPreviousAsync()
                     .map_err(|e| e.to_string())?
-                    .get()
+                    .join()
                     .map_err(|e| e.to_string())?;
             }
             _ => return Err("invalid media action".to_string()),
@@ -570,7 +567,7 @@ pub fn watch_local_media(handle: AppHandle) {
         use windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager;
 
         if let Ok(manager_op) = GlobalSystemMediaTransportControlsSessionManager::RequestAsync() {
-            if let Ok(manager) = manager_op.get() {
+            if let Ok(manager) = manager_op.join() {
                 let h1 = handle.clone();
                 let _ = manager.CurrentSessionChanged(&TypedEventHandler::new(move |_, _| {
                     let h2 = h1.clone();
@@ -625,7 +622,7 @@ pub fn restore_secret(target: &str, secret: Option<&str>) -> Result<(), String> 
         None => {
             let target = wide(target);
             unsafe {
-                CredDeleteW(PCWSTR(target.as_ptr()), CRED_TYPE_GENERIC, 0)
+                CredDeleteW(PCWSTR(target.as_ptr()), CRED_TYPE_GENERIC, Some(0))
                     .or_else(|error| {
                         if error.code().0 as u32 == 1168 {
                             Ok(())
@@ -646,7 +643,7 @@ pub fn read_secret(target: &str) -> Result<Option<String>, String> {
         if let Err(error) = CredReadW(
             PCWSTR(target.as_ptr()),
             CRED_TYPE_GENERIC,
-            0,
+            Some(0),
             &mut credential,
         ) {
             if error.code().0 as u32 == 1168 {

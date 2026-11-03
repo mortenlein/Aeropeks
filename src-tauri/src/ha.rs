@@ -318,10 +318,9 @@ pub async fn get_calendar_events(
             let (start_str, all_day) =
                 if let Some(dt) = start_obj.get("dateTime").and_then(|v| v.as_str()) {
                     (dt.to_string(), false)
-                } else if let Some(d) = start_obj.get("date").and_then(|v| v.as_str()) {
-                    (d.to_string(), true)
                 } else {
-                    return None;
+                    let d = start_obj.get("date").and_then(|v| v.as_str())?;
+                    (d.to_string(), true)
                 };
 
             let end_str = if let Some(dt) = end_obj.get("dateTime").and_then(|v| v.as_str()) {

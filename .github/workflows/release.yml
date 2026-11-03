@@ -42,7 +42,10 @@ jobs:
           targets: ${{ matrix.platform == 'windows-latest' && 'x86_64-pc-windows-msvc' || '' }}
 
       - name: install frontend dependencies
-        run: npm install
+        run: npm ci
+
+      - name: frontend tests
+        run: npm test
 
       - uses: tauri-apps/tauri-action@v0
         env:

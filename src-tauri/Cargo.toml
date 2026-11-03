@@ -1,8 +1,8 @@
 [package]
 name = "aeropeks"
-version = "0.1.0"
+version = "0.1.4"
 description = "A premium macOS-style top menu bar for Windows"
-authors = ["Antigravity"]
+authors = ["Morten Lein"]
 edition = "2021"
 
 [build-dependencies]
@@ -12,19 +12,19 @@ tauri-build = { version = "2.0.0", features = [] }
 tauri = { version = "2", features = ["tray-icon"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-reqwest = { version = "0.12", features = ["json"] }
-base64 = "0.22"
+reqwest = { version = "0.13", features = ["json"] }
+base64 = "0.23"
 urlencoding = "2"
-portable-pty = "0.8"
+portable-pty = "0.9"
 open = "5"
 tauri-plugin-global-shortcut = "2.0.0"
 tokio = { version = "1", features = ["macros", "sync", "time"] }
-obws = "0.12"
+obws = "0.15"
 log = "0.4"
 env_logger = "0.11"
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.58.0", features = [
+windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Shell",
