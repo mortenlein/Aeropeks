@@ -67,6 +67,25 @@ fn show_terminal_context_menu(
     Ok(())
 }
 
+#[tauri::command]
+fn get_autostart(handle: tauri::AppHandle, window: Window) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    security::require_window(&window, &["settings"])?;
+    handle.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_autostart(enabled: bool, handle: tauri::AppHandle, window: Window) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    security::require_window(&window, &["settings"])?;
+    let launcher = handle.autolaunch();
+    if enabled {
+        launcher.enable().map_err(|e| e.to_string())
+    } else {
+        launcher.disable().map_err(|e| e.to_string())
+    }
+}
+
 /// Set once the user saves settings, so the startup secrets thread never
 /// replaces newer in-memory settings with what it read from disk.
 static SETTINGS_SAVED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -378,6 +397,15 @@ fn main() {
     let shutdown: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
 
     tauri::Builder::default()
+        // Must be registered first. A second launch (e.g. login autostart plus
+        // a manual start) hands over to the running bar instead of doubling it.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            open_settings_internal(app);
+        }))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .manage(shared.clone())
         .manage(http::HttpClient::new())
         .manage(ha::HaState::default())
@@ -417,6 +445,13 @@ fn main() {
             let first_run = settings::settings_path(app.handle())
                 .map(|path| !path.exists())
                 .unwrap_or(false);
+            // Fresh installs launch at login by default; it can be turned off in
+            // Settings. Skipped in debug builds so `tauri dev` never registers
+            // a development binary.
+            if first_run && !cfg!(debug_assertions) {
+                use tauri_plugin_autostart::ManagerExt;
+                let _ = app.autolaunch().enable();
+            }
             // File-only load: the credential store can block on an unlock
             // prompt (Secret Service on Linux), which must not keep the bar
             // from appearing. Secrets are attached in a thread below.
@@ -573,6 +608,8 @@ fn main() {
             media::get_media_info_unified,
             media::media_control_unified,
             get_settings,
+            get_autostart,
+            set_autostart,
             save_settings,
             open_settings,
             toggle_expanded_player,
