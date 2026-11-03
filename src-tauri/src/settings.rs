@@ -363,30 +363,36 @@ pub fn load(handle: &tauri::AppHandle) -> AppSettings {
         return settings;
     };
 
-    let plaintext_plex = settings.plex_token.clone();
-    let plaintext_obs = settings.obs_websocket_password.clone();
-    let plaintext_github = settings.github_token.clone();
-    settings.plex_token = read_secret(PLEX_TOKEN_TARGET)
-        .ok()
-        .flatten()
-        .unwrap_or(plaintext_plex);
-    settings.obs_websocket_password = read_secret(OBS_PASSWORD_TARGET)
-        .ok()
-        .flatten()
-        .unwrap_or(plaintext_obs);
-    settings.github_token = read_secret(GITHUB_TOKEN_TARGET)
-        .ok()
-        .flatten()
-        .unwrap_or(plaintext_github);
-    settings.homeassistant_token = read_secret(HA_TOKEN_TARGET)
-        .ok()
-        .flatten()
-        .unwrap_or_default();
+    // Fill each secret from the credential store. A failed read (e.g. a locked
+    // keyring) must never lead to writing empty values back over stored ones.
+    let mut read_failed = false;
+    let mut migrate_plaintext = false;
+    let mut attach = |target: &str, field: &mut String| {
+        let plaintext = std::mem::take(field);
+        match read_secret(target) {
+            Ok(Some(stored)) => *field = stored,
+            Ok(None) => {
+                migrate_plaintext |= !plaintext.is_empty();
+                *field = plaintext;
+            }
+            Err(_) => {
+                read_failed = true;
+                *field = plaintext;
+            }
+        }
+    };
+    attach(PLEX_TOKEN_TARGET, &mut settings.plex_token);
+    attach(OBS_PASSWORD_TARGET, &mut settings.obs_websocket_password);
+    attach(GITHUB_TOKEN_TARGET, &mut settings.github_token);
+    attach(HA_TOKEN_TARGET, &mut settings.homeassistant_token);
 
     // One-time cleanup of the credential left behind by the removed Dreame integration.
     let _ = restore_secret(RETIRED_DREAME_PASSWORD_TARGET, None);
 
-    if persist_secrets(&settings).is_ok() {
+    // Only rewrite anything when legacy plaintext secrets need moving into the
+    // credential store. Otherwise this runs concurrently with the UI and could
+    // overwrite a save made while startup was still loading.
+    if migrate_plaintext && !read_failed && persist_secrets(&settings).is_ok() {
         let _ = write_file(&path, &settings);
     }
     settings
